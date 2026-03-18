@@ -784,7 +784,7 @@ When assembling context for a token budget:
        else:
            try truncating chunk to fit remaining budget
            break if even truncated chunk won't fit
-7. Format output as ContextPackage
+9. Format output as ContextPackage
 ```
 
 This greedy approach is simple, fast (<5ms), and produces good results. A more sophisticated
@@ -876,8 +876,7 @@ Closed-loop learning from agent feedback to improve future context assembly.
 
 **v2.1 change: Default model is now `jina-embeddings-v2-base-code`.** This is a code-specific
 embedding model that provides 20-50% better retrieval accuracy on CodeSearchNet benchmarks
-compared to general-purpose models like `bge-small-en-v1.5`. It ships in `fastembed-rs` and
-requires no additional setup beyond ONNX Runtime.
+compared to general-purpose models like `bge-small-en-v1.5`.
 
 **Why Jina v2 Base Code:**
 - 137M parameters, 768 dimensions — good balance of quality vs speed
@@ -1249,7 +1248,7 @@ Response:
   "chunks_total": 18420,
   "last_indexed_at": "2026-03-01T10:30:00Z",
   "embedding_backend": "onnx",
-  "embedding_dim": 384,
+  "embedding_dim": 768,
   "index_size_mb": 145,
   "watcher_active": true
 }
@@ -1307,7 +1306,7 @@ Response:
 {
   "status": "recorded",
   "feedback_count": 42,
-  "message": "Feedback stored. Ranking adjustments will apply after 5+ signals per chunk."
+  "message": "Feedback stored. Ranking adjustments will apply after 10+ signals per chunk."
 }
 ```
 
@@ -1437,6 +1436,7 @@ tree-sitter-go = "0.23"
 # Embedding (v2.3: ort is primary, fastembed optional)
 ort = "2"                          # ONNX Runtime — primary embedding backend (static CPU link by default)
 tokenizers = "0.20"                # HuggingFace tokenizer for ONNX model input construction
+tiktoken-rs = "0.5"                # Precise token counting for two-pass budget verification (v2.3)
 reqwest = { version = "0.12", features = ["json"] }
 # fastembed = "4"                  # Optional convenience layer — uncomment if fastembed-rs supports Jina v2
 
@@ -1965,7 +1965,7 @@ pub struct CommitInfo {
 
 **Function 5.12: `ContextStitcher::diversify_languages(chunks: Vec<ContextChunk>) -> Vec<ContextChunk>`** (v2.1)
 - After initial ranking, check language distribution of selected chunks
-- Adaptive threshold: 70% for full-stack/monorepo, 90% for single-language, 95% default (v2.2 fix)
+- Adaptive threshold: 70% for full-stack/monorepo, 95% for single-language, 90% default (v2.2 fix)
 - When triggered: boost underrepresented languages by 1.2x, re-sort by adjusted scores
 - Ensures full-stack queries return cross-language context
 - What you learn: statistical distribution analysis, adaptive scoring
@@ -2170,6 +2170,7 @@ vektor/
     │   ├── feedback.rs    ← FeedbackStore (quality feedback loop, v2.1)
     │   └── synonyms.rs   ← SynonymExpander (static code concept map, v2.2)
     ├── search.rs          ← rrf_fuse() + search_hybrid() + AdaptiveWeights (v2.2)
+    ├── reranker.rs        ← CrossEncoderReranker (Phase 2, moved from Phase 3 in v2.3)
     ├── indexer.rs         ← index_codebase() orchestrator
     ├── shallow.rs         ← ShallowIndexer (two-tier fast path, v2.1)
     ├── status.rs          ← IndexStatusTracker (index phase state machine, v2.1)
