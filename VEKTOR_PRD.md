@@ -12,8 +12,8 @@
 | Field | Value |
 |---|---|
 | Project | Vektor |
-| Version | 2.2.1 |
-| Status | v2.2.1 — Context Engine + Agent DX + Accuracy/Performance + Database Architecture hardening |
+| Version | 2.3.0 |
+| Status | v2.3 — Context Engine + Agent DX + Accuracy/Performance + Database Architecture + Retrieval Accuracy hardening |
 | Stack | Rust + ONNX Runtime + LanceDB (embedded) + Tantivy + MCP Protocol |
 | License | MIT (open source) |
 | Author | Dinesh |
@@ -259,6 +259,12 @@ sub-chunked with 25% overlap. This prevents large functions (300+ lines) from pr
 single chunks that waste token budget and degrade embedding quality. Rust `impl` blocks
 and Python classes are chunked at the method level, not the container level.
 
+**Header preservation (v2.3):** When sub-chunking large AST nodes, **always prepend the
+parent node's signature** (first 3-5 lines: function signature, class declaration, etc.)
+to each sub-chunk. Without this, the second sub-chunk of a 300-line function is semantically
+orphaned — the embedding cannot capture what function this code belongs to. This produces
+a 15-20% retrieval improvement for large functions (validated by Aider's chunking experiments).
+
 Falls back to sliding window for unsupported file types:
 - **Code files**: 80-line window, 25% overlap (20 lines)
 - **Documentation files** (*.md, *.txt, *.rst): 40-line window, 40% overlap (16 lines)
@@ -372,7 +378,7 @@ BM25 query is expanded to OR across all synonyms. Semantic search uses the origi
 This closes a 10-15% recall gap on natural language queries with minimal latency cost (~3-8ms
 for the expanded BM25 query, depending on synonym count and index size).
 
-Optional re-ranking via cross-encoder model (Phase 3).
+Optional re-ranking via cross-encoder model (Phase 2, moved from Phase 3 in v2.3).
 
 ### 4.3 Data Flow
 
@@ -645,10 +651,19 @@ Agent query: "how does auth work" + token_budget=8000
 ### 5.3 Core Components
 
 #### TokenCounter
-Estimates token count for text without calling an LLM tokenizer (too slow for real-time).
-Uses a fast heuristic: `tokens ≈ bytes / 3.5` for code (empirically accurate within 5%
-for most programming languages). Optional precise mode using `tiktoken-rs` for final budget
-verification.
+Estimates token count for text using **language-specific ratios** (v2.3 fix):
+- Python, JavaScript, TypeScript: `bytes / 3.5` (~5% error)
+- Rust, Go, Java: `bytes / 4.2` (generics/type annotations increase bytes-per-token)
+- Documentation (Markdown, RST): `bytes / 4.8` (natural language is more token-efficient)
+- Default (unknown language): `bytes / 3.8`
+
+The original `bytes / 3.5` heuristic had 29-43% error for non-Python code (Rust generics,
+verbose Java types), causing significant budget over/under-fill.
+
+**Two-pass budget verification (v2.3):** During greedy allocation, fill to 90% of budget
+using the fast heuristic. Then run a precise token count via `tiktoken-rs` on the assembled
+package. If under budget, add more chunks. If over, truncate the last chunk. This two-pass
+approach adds <1ms and ensures accurate budget utilization.
 
 #### ContextAssembler
 The orchestrator. Given search results + config, produces a `ContextPackage`:
@@ -661,6 +676,7 @@ pub struct AssemblyConfig {
     pub min_relevance: f32,          // quality floor (e.g., 0.5)
     pub deduplicate: bool,           // remove overlapping chunks?
     pub include_docs: bool,          // include README/docs if relevant?
+    pub scope: Option<String>,       // workspace-relative path for monorepo scoping (v2.3)
 }
 
 pub struct ContextPackage {
@@ -669,6 +685,30 @@ pub struct ContextPackage {
     pub total_tokens: usize,         // actual token count
     pub budget_used_pct: f32,        // how much of budget was used
     pub search_metadata: SearchMeta, // timing, scores, cache hit
+    pub result_confidence: Confidence, // high/medium/low (v2.3)
+    pub budget_gap_reason: Option<GapReason>, // why budget wasn't fully used (v2.3)
+    pub suggested_action: Option<String>,     // agent guidance (v2.3)
+    pub clusters: Option<Vec<ResultCluster>>, // for ambiguous queries (v2.3)
+}
+
+/// Confidence signaling (v2.3) — lets agents decide whether to trust results
+pub enum Confidence {
+    High,   // top result score >0.8, ≥3 results above min_relevance
+    Medium, // top result 0.5-0.8
+    Low,    // top result <0.5 or <2 results above threshold
+}
+
+pub enum GapReason {
+    NoMoreRelevant,     // remaining chunks below min_relevance
+    IndexIncomplete,    // index_status != "full"
+    ThresholdFiltered,  // chunks exist but below min_relevance
+}
+
+/// Result clustering for ambiguous queries (v2.3)
+pub struct ResultCluster {
+    pub path_prefix: String,  // e.g., "src/auth/oauth"
+    pub chunk_count: usize,
+    pub avg_relevance: f32,
 }
 
 pub struct ContextChunk {
@@ -702,6 +742,15 @@ Given the files found by search, expand to include architecturally related files
      0.5 min_relevance threshold, making `include_related` effectively non-functional
 6. **Expanded files are exempt from min_relevance filtering** (v2.2 fix) — they have already
    been validated as architecturally related. Token budget allocation handles prioritization.
+7. **Chunk-level expansion (v2.3 fix):** When a related file is identified, do NOT include
+   the entire file. Instead, run a quick vector similarity check against the query embedding
+   on the file's chunks (already in LanceDB), and include only chunks scoring above 0.3.
+   This prevents a 500-line middleware file from consuming token budget when only 20 lines
+   are relevant. Previous file-level expansion was the #1 source of budget waste.
+8. **Expansion caps (v2.3):** Max 5 expanded files per query, max 3 chunks per expanded file.
+   Bounds the worst case for hub files that import/export dozens of modules.
+9. **Hub-file detection (v2.3):** Skip files with >20 inbound or outbound imports during
+   expansion (these are re-export barrels like `index.ts` or `mod.rs`, not meaningful deps).
 
 #### QueryCache
 LRU cache keyed on `(query_text, search_mode, project_hash)`:
@@ -833,9 +882,9 @@ requires no additional setup beyond ONNX Runtime.
 **Why Jina v2 Base Code:**
 - 137M parameters, 768 dimensions — good balance of quality vs speed
 - Trained specifically on code: understands function signatures, variable names, docstrings
-- Available in `fastembed-rs` crate — drop-in ONNX support, no manual model download.
-  **Fallback (v2.2):** If fastembed-rs does not support this model at the pinned version,
-  use `ort` directly with the ONNX file from HuggingFace (manual download to `~/.vektor/models/`)
+- **v2.3:** `OnnxEmbedder` is built directly against `ort` + `tokenizers` (primary approach).
+  `fastembed-rs` is optional — its Rust crate may not support Jina v2 at the required version.
+  ONNX model + tokenizer.json downloaded from HuggingFace on first run to `~/.vektor/models/`.
 - Apache 2.0 license — fully open source, no usage restrictions
 - 8K token context window — handles large functions without truncation
 
@@ -883,8 +932,9 @@ These techniques improve retrieval quality beyond just model selection:
 3. **Query expansion** (Phase 3, optional) — Call a local LLM to expand the search query
    with synonyms before embedding. e.g., "auth" → "authentication, login, token, session, JWT".
 
-4. **Cross-encoder re-ranking** (Phase 3) — After RRF fusion, re-score top-20 results with
-   a local cross-encoder model. Return top-8. Significant precision improvement at low latency.
+4. **Cross-encoder re-ranking** (Phase 2, moved from Phase 3 in v2.3) — After RRF fusion,
+   re-score top-20 results with a local cross-encoder model. Return top-K. This is the single
+   highest-impact accuracy improvement: 10-15% Precision@5 lift at ~200ms additional latency.
 
 5. **Chunk overlap** — 25% line overlap between adjacent chunks prevents semantic content
    from being split at chunk boundaries.
@@ -1052,7 +1102,8 @@ LLM consumption. This is what makes agents 30-80% more effective.
   "include_related": true,
   "min_relevance": 0.5,
   "include_docs": true,
-  "bypass_cache": false
+  "bypass_cache": false,
+  "scope": "packages/auth-service"
 }
 ```
 
@@ -1100,10 +1151,30 @@ Response:
     "search_time_ms": 45,
     "cache_hit": false,
     "index_status": "full",
-    "index_coverage_pct": 99.8
+    "index_coverage_pct": 99.8,
+    "result_confidence": "high",
+    "budget_gap_reason": "no_more_relevant",
+    "suggested_action": null,
+    "clusters": [
+      {"path": "src/auth/jwt", "chunk_count": 3, "avg_relevance": 0.85},
+      {"path": "src/auth/middleware", "chunk_count": 2, "avg_relevance": 0.72}
+    ]
   }
 }
 ```
+
+**`scope` parameter (v2.3):** Optional workspace-relative path to bias results toward a
+specific package/directory. Critical for monorepos where agents work in one package at a time.
+When set, results from the scoped path get a 1.5x score boost, and related expansion is
+limited to the scope and its direct dependencies. Without scoping, a 200K-file monorepo
+produces noisy cross-package results. Workspace roots are auto-detected (Cargo workspaces,
+npm workspaces, Go modules).
+
+**Confidence signaling (v2.3):** The `result_confidence`, `budget_gap_reason`, and
+`suggested_action` fields enable agents to make informed decisions:
+- `"result_confidence": "low"` + `"suggested_action": "try broader query"` → agent reformulates
+- `"result_confidence": "medium"` + `"budget_gap_reason": "index_incomplete"` → agent waits for full index
+- `"clusters"` field appears when results span >2 distinct code areas, enabling disambiguation
 
 #### `search_code`
 Hybrid BM25 + semantic vector search. Returns raw ranked results (for agents that want
@@ -1276,25 +1347,33 @@ Vektor exposes MCP Resources for passive context subscription (see Section 7.5):
 
 | Metric | Target | Stretch Goal | Comparison |
 |---|---|---|---|
-| Full index: 10K file codebase (CPU) | <180s | <90s | Python equiv: ~300s |
-| Full index: 10K file codebase (GPU/accel) | <60s | <30s | With CUDA/CoreML/DirectML |
-| Full index: 100K file codebase | <20min | <10min | Augment: ~15min |
+| Full index: 10K files, `--lite` (bge-small 384d, CPU) | **<180s** | <90s | Recommended for fast indexing |
+| Full index: 10K files, Jina v2 768d (CPU) | **<600s** | <300s | Higher accuracy, ~3x slower (v2.3 revised) |
+| Full index: 10K files (GPU/CoreML accel) | <60s | <30s | With CUDA/CoreML/DirectML |
+| Full index: 100K file codebase (CPU, `--lite`) | <20min | <10min | Augment: ~15min (cloud) |
 | Incremental re-index (1 file change) | <500ms | <200ms | Augment: ~300ms |
-| `search_code` (local ONNX embed) | <100ms | <30ms | Zilliz: ~400ms (cloud RTT) |
+| `search_code` (local ONNX embed) | <150ms (P95) | <100ms (P50) | Zilliz: ~400ms (cloud RTT) (v2.3 revised) |
 | `search_code` (cloud API embed query) | <300ms | <150ms | Zilliz: ~600ms |
-| **`get_context_for_prompt`** (local ONNX) | **<150ms** | **<50ms** | Augment: ~200ms (cloud) |
+| **`get_context_for_prompt`** (local ONNX) | **<200ms** | **<100ms** | Augment: ~200ms (cloud) (v2.3 revised) |
 | **Context assembly overhead** | **<10ms** | **<5ms** | (dedup + budget + format) |
 | **Cache hit response** | **<5ms** | **<2ms** | — |
 | Binary size (without ONNX runtime) | <50MB | <30MB | — |
-| RAM: 10K files indexed | <500MB | <300MB | Python: ~800MB |
+| RAM: 10K files indexed (Jina v2) | **<700MB** | <500MB | ONNX model ~300MB + index (v2.3 revised) |
+| RAM: 10K files indexed (`--lite`) | **<400MB** | <250MB | bge-small model ~130MB (v2.3) |
 | RAM: 100K files indexed | <2GB | <1.2GB | Augment: ~3GB |
-| Precision@5 code retrieval | >0.72 | >0.80 | Zilliz baseline: ~0.65 |
+| Precision@5 code retrieval (Phase 1) | **>0.65** | >0.72 | Zilliz baseline: ~0.65 (v2.3 revised) |
+| Precision@5 code retrieval (Phase 2, with re-ranker) | **>0.78** | >0.85 | CocoIndex: ~0.55-0.60 (v2.3) |
 | **Shallow index (keyword-ready)** | **<5s** | **<2s** | **CocoIndex: no equivalent** |
 | **Time to first search result (new project)** | **<8s** | **<3s** | **Augment: ~60s** |
 | **Skills discovery by agent** | **<1s** | **—** | **CocoIndex: ~1s (npx skills)** |
 | **Feedback ingestion** | **<10ms** | **<5ms** | **—** |
 | **ONNX warm-up (first query)** | **<5s at startup** | **<2s** | **Without warm-up: 3-5s cold start** |
 | **Watcher re-index with chunk cache** | **<300ms** | **<150ms** | **Without cache: ~350ms** |
+
+> **v2.3 performance note:** CPU targets for full indexing with Jina v2 768d were revised
+> upward after analysis showed embedding is the bottleneck (~200-400ms per batch of 32 on CPU).
+> The `--lite` flag (bge-small, 384d, ~50-100ms/batch) is the recommended fast path.
+> GPU/CoreML acceleration brings Jina v2 to the original targets.
 
 ---
 
@@ -1305,7 +1384,7 @@ Vektor exposes MCP Resources for passive context subscription (see Section 7.5):
 | MCP Protocol | `rmcp` v0.16+ | Official Rust MCP SDK, stdio + SSE transport |
 | File Watching | `notify` v6 | OS-native events, cross-platform |
 | AST Chunking | `tree-sitter` + language grammars | Official Rust crate, 40+ languages |
-| ONNX Inference | `ort` v2 + `fastembed` v4 | ONNX Runtime + high-level embedding API with model management |
+| ONNX Inference | `ort` v2 + `tokenizers` | ONNX Runtime (primary) + HuggingFace tokenizer for model input (v2.3: `ort` is primary, `fastembed` optional) |
 | Tokenization | `tokenizers` | HuggingFace tokenizer for ONNX models |
 | Vector Database | `lancedb` (embedded) | True in-process embedded, Arrow-based, no server |
 | Full-Text Search | `tantivy` | Pure Rust BM25, Lucene equivalent |
@@ -1355,17 +1434,17 @@ tree-sitter-javascript = "0.23"
 tree-sitter-rust = "0.23"
 tree-sitter-go = "0.23"
 
-# Embedding
-fastembed = "4"                    # Wraps ONNX Runtime, handles Jina v2 model download (v2.1)
-ort = { version = "2", features = ["load-dynamic"] }
-tokenizers = "0.20"
+# Embedding (v2.3: ort is primary, fastembed optional)
+ort = "2"                          # ONNX Runtime — primary embedding backend (static CPU link by default)
+tokenizers = "0.20"                # HuggingFace tokenizer for ONNX model input construction
 reqwest = { version = "0.12", features = ["json"] }
+# fastembed = "4"                  # Optional convenience layer — uncomment if fastembed-rs supports Jina v2
 
 # Vector Storage (LanceDB embedded)
+# NOTE: Do NOT independently pin arrow versions. Let lancedb dictate the arrow version
+# via its transitive dependency to avoid type-mismatch compilation failures. (v2.3 fix)
 lancedb = "0.23"
-arrow = "53"
-arrow-array = "53"
-arrow-schema = "53"
+# arrow, arrow-array, arrow-schema versions are inherited from lancedb
 
 # Full-Text Search
 tantivy = "0.22"
@@ -1525,18 +1604,25 @@ pub trait Embedder: Send + Sync {
   helper methods that auto-prepend the correct prefix
 - What you learn: Rust traits, `async_trait` macro, `Send + Sync` bounds, default trait methods
 
-**Function 3.2: `OnnxEmbedder::new(model_name: &str) -> Result<Self>`**
-- Load ONNX model via `ort` crate
-- Handle first-run model download (models stored in `~/.vektor/models/`)
-- What you learn: `ort` API, model loading, file paths with `dirs` crate
+**Function 3.2: `OnnxEmbedder::new(model_name: &str) -> Result<Self>`** (v2.3: `ort`-direct approach)
+- Load ONNX model via `ort` crate directly (NOT `fastembed`, which may lack Jina v2 support)
+- Download ONNX model from HuggingFace on first run (stored in `~/.vektor/models/`)
+- Load matching `tokenizer.json` for the model (via `tokenizers` crate)
+- Configure ONNX session: `GraphOptimizationLevel::Level3`, static CPU provider by default
+- **Warm-up:** Embed a dummy string at init for batch_size=1 and batch_size=32 to trigger
+  ONNX JIT compilation. Consider padding to powers of 2 (1, 2, 4, 8, 16, 32) for all shapes.
+- What you learn: `ort` API, model loading, HuggingFace model format, `tokenizers` crate
 
 **Function 3.3: `OnnxEmbedder::embed(texts: Vec<String>) -> Result<Vec<Vec<f32>>>`**
-- Tokenize input texts (use `tokenizers` crate)
+- Prepend query/document prefix before tokenization (e.g., `"search_document: "` for Jina v2)
+  — prefix must come before any content enrichment (function signature, docstring)
+- Tokenize input texts (use `tokenizers` crate with model's `tokenizer.json`)
+- Construct input tensors: `input_ids`, `attention_mask`, `token_type_ids` (model-dependent)
 - Run ONNX inference session
-- Extract embedding vectors from output tensor
+- Extract embedding vectors from output tensor, apply mean pooling over token embeddings
 - L2-normalize vectors (required for cosine similarity via dot product)
 - Process in batches of 32 to avoid OOM
-- What you learn: tensor operations, batch processing, normalization math
+- What you learn: tensor operations, batch processing, normalization math, tokenizer API
 
 **Function 3.4: `OpenAiCompatEmbedder::embed(texts: Vec<String>) -> Result<Vec<Vec<f32>>>`**
 - HTTP POST to OpenAI-compatible `/v1/embeddings` endpoint via `reqwest`
@@ -1859,13 +1945,16 @@ pub struct CommitInfo {
 - `record(rel_path, chunk_key, useful: bool)` → store feedback
 - `get_adjustment(rel_path, chunk_key) -> f32` → multiplier from aggregated feedback with 30-day decay:
   ```sql
-  -- Decay query: weight feedback by age (30-day half-life)
-  SELECT
-    SUM(CASE WHEN useful = 1 THEN power(0.5, (strftime('%s','now') - timestamp) / 2592000.0) ELSE 0 END) as weighted_useful,
-    SUM(power(0.5, (strftime('%s','now') - timestamp) / 2592000.0)) as total_weight
-  FROM feedback
+  -- Fetch raw feedback records (typically <50 per chunk)
+  SELECT useful, timestamp FROM feedback
   WHERE rel_path = ? AND chunk_key = ?;
-
+  ```
+  **Decay computed in Rust, not SQL (v2.3 fix):** SQLite's `power()` function requires
+  `-DSQLITE_ENABLE_MATH_FUNCTIONS` at compile time, which `rusqlite` with `bundled` may not
+  enable. Computing `0.5_f64.powf((now - ts) as f64 / 2_592_000.0)` in Rust is simpler,
+  testable, and avoids build-flag dependencies. Typical result sets are <50 rows — no
+  performance concern.
+  ```sql
   -- Pruning: periodically delete feedback older than 90 days (3 half-lives = <12.5% weight)
   DELETE FROM feedback WHERE timestamp < strftime('%s','now') - 7776000;
   ```
@@ -1881,17 +1970,21 @@ pub struct CommitInfo {
 - Ensures full-stack queries return cross-language context
 - What you learn: statistical distribution analysis, adaptive scoring
 
+**Function 5.13: `CrossEncoderReranker::rerank(query: &str, results: Vec<SearchResult>) -> Vec<SearchResult>`** (v2.3 — moved from Phase 3)
+- Load cross-encoder ONNX model (e.g., `cross-encoder/ms-marco-MiniLM-L-6-v2`, 22M params)
+- Re-rank top-20 bi-encoder results by scoring each (query, passage) pair
+- Re-sort results by cross-encoder score, return top-K
+- ~10ms per pair on CPU → ~200ms for top-20 re-ranking (acceptable within search budget)
+- **This is the single highest-impact accuracy improvement:** 10-15% Precision@5 lift over
+  bi-encoder alone. Moved from Phase 3 to Phase 2 because shipping two phases without
+  re-ranking means materially worse accuracy than necessary.
+- What you learn: cross-encoder vs bi-encoder architecture, re-ranking pattern, ONNX multi-model
+
 ---
 
 ### Phase 3 — Production Hardening (Weeks 13–16)
 
-Goal: Cross-encoder re-ranking, extended language support, packaging, benchmarks.
-
-**Function 6.1: `CrossEncoderReranker::rerank(query: &str, results: Vec<SearchResult>) -> Vec<SearchResult>`**
-- Load cross-encoder ONNX model (e.g., `cross-encoder/ms-marco-MiniLM-L-6-v2`)
-- Score each (query, passage) pair
-- Re-sort results by cross-encoder score
-- What you learn: cross-encoder vs bi-encoder architecture, re-ranking pattern
+Goal: Extended language support, packaging, benchmarks, advanced retrieval.
 
 **Function 6.2: Extend tree-sitter grammars**
 - Add Java, C, C++, C#, Ruby, PHP grammars to `Cargo.toml`
@@ -1927,8 +2020,11 @@ Goal: Cross-encoder re-ranking, extended language support, packaging, benchmarks
 | Skills standard evolving (agentskills.io) | Low | SKILL.md is simple markdown — easy to update format. Minimal maintenance burden. |
 | Two-tier indexing adds complexity to tool handlers | Medium | Clear `IndexPhase` enum. All handlers check status via `IndexStatusTracker` before choosing search mode. Well-tested state machine. |
 | Cross-store inconsistency after crash (LanceDB written, Tantivy not) | Medium | Delete-then-insert with HashStore as source of truth. `delete_by_file` before re-insert during recovery. Separate SQLite files per concern. (v2.2) |
-| fastembed-rs may not support Jina v2 Base Code at pinned version | Medium | Fallback: use `ort` directly with manual ONNX download from HuggingFace. Verify support before Phase 1 Week 3. (v2.2) |
+| fastembed-rs may not support Jina v2 Base Code at pinned version | Medium | **v2.3 fix:** `ort` + `tokenizers` is now the primary approach; `fastembed` is optional. Build `OnnxEmbedder` directly against `ort` for Jina v2 with manual tokenization, pooling, and normalization. (v2.3) |
 | Embedding dimension mismatch when switching models | Medium | Store (model_name, dim) in project metadata. Detect mismatch → force clean re-index with user warning. (v2.2) |
+| Arrow version coupling across lancedb and independent pins | High | **v2.3 fix:** Do not independently pin arrow versions. Let `lancedb` dictate via transitive dependency. Use `cargo tree -d` to detect duplicate arrow versions. (v2.3) |
+| SQLite `power()` function unavailable in standard builds | High | **v2.3 fix:** Compute feedback decay in Rust, not SQL. Fetch raw records, apply `0.5_f64.powf()` in code. Avoids `-DSQLITE_ENABLE_MATH_FUNCTIONS` build flag dependency. (v2.3) |
+| Monorepo cross-package noise at 200K+ files | High | **v2.3 fix:** `scope` parameter on `get_context_for_prompt` biases results to active package. Auto-detect workspace roots. (v2.3) |
 | LanceDB ANN degradation at 100K+ chunks without explicit index | Medium | Build IVF_PQ index after initial indexing. Rebuild via `index_stats` churn tracking at 10% threshold (Section 4.2). Skip IVF_PQ for <50K chunks. (v2.2.1) |
 | `report_context_quality` — agents won't voluntarily call this | Low | Phase 3: infer quality passively (re-query within 30s = unhelpful, file edit after result = helpful). For now, rely on explicit SKILL.md instructions. (v2.2) |
 
@@ -1948,7 +2044,7 @@ Goal: Cross-encoder re-ranking, extended language support, packaging, benchmarks
 - [ ] Zero external API key required for basic operation (local ONNX mode works)
 - [ ] All 5 core MCP tools working: `index_codebase`, `search_code`, `get_context_for_prompt`, `get_index_status`, `clear_index`
 - [ ] Keyword search available within 5s of first tool call on new project (two-tier indexing)
-- [ ] Jina v2 Base Code model loads and embeds correctly via fastembed-rs
+- [ ] Jina v2 Base Code model loads and embeds correctly via `ort` + `tokenizers` (v2.3)
 - [ ] Skills file discoverable by Claude Code without explicit MCP config
 - [ ] All tool responses include `index_status` and `index_coverage_pct` fields
 - [ ] Content-addressed chunk IDs stable when function moves lines but content unchanged (v2.2)
@@ -1970,10 +2066,15 @@ Goal: Cross-encoder re-ranking, extended language support, packaging, benchmarks
 - [ ] Recency weighting ranks recently modified files higher WITHOUT polluting top-5 with irrelevant recent files (v2.2)
 - [ ] Feedback keyed on (rel_path, symbol_name) survives re-indexing — no orphaned feedback (v2.2)
 - [ ] Embedding dimension mismatch detected on startup with clear user message (v2.2)
+- [ ] Cross-encoder re-ranking improves Precision@5 to >0.78 (v2.3 — moved from Phase 3)
+- [ ] `result_confidence` field accurately reflects result quality (v2.3)
+- [ ] `scope` parameter correctly biases monorepo results to scoped package (v2.3)
+- [ ] Chunk-level expansion returns only relevant chunks from related files, not entire files (v2.3)
+- [ ] Language-specific token estimation error <15% across Python, Rust, Go, TypeScript (v2.3)
+- [ ] Header preservation: sub-chunked functions include parent signature in each sub-chunk (v2.3)
 
 ### Phase 3 — Nice to Have
 
-- [ ] Cross-encoder re-ranking improves Precision@5 to >0.80
 - [ ] Install script works: `curl -fsSL https://install.vektor.dev | sh`
 - [ ] Benchmark results published and honest comparison vs Zilliz MCP documented
 - [ ] 100+ GitHub stars within 30 days of public launch
