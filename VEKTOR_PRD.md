@@ -2001,6 +2001,30 @@ Goal: Extended language support, packaging, benchmarks, advanced retrieval.
 - Use public codebases as test fixtures (e.g., CPython, Tokio, Axum)
 - Publish results in `BENCHMARKS.md`
 
+**Function 6.5: Supermemory `code-chunk` chunking comparison**
+- Benchmark Vektor's tree-sitter AST chunker against Supermemory's open-source
+  [`code-chunk`](https://github.com/supermemoryai/code-chunk) npm package
+- `code-chunk` claims Recall@5 of 70.1% vs 42.4% for fixed-size chunking (28-point improvement)
+  using tree-sitter with scope hierarchy, imports, and sibling context enrichment
+- **Test methodology:**
+  1. Select 3 public codebases (one per language: Python, TypeScript, Rust)
+  2. Create 50 ground-truth queries per codebase with expected relevant chunks (manually labeled)
+  3. Run both chunkers on the same codebases, embed chunks with the same model (Jina v2 Base Code)
+  4. Compare Recall@5 and Precision@5 on identical queries
+  5. Measure: chunk count, avg chunk size, embedding cost (total tokens), retrieval accuracy
+- **What to validate:**
+  - Does Vektor's header preservation (v2.3) + sub-chunking match or beat `code-chunk`'s
+    scope hierarchy enrichment?
+  - Does Vektor's doc-file-specific windowing (40-line, 40% overlap) outperform `code-chunk`
+    on mixed code+docs queries?
+  - Does `code-chunk`'s sibling context (adjacent functions) improve retrieval for
+    "what other functions relate to X?" queries? If so, consider adopting as a chunk metadata field.
+- **Key differences to account for:**
+  - `code-chunk` supports 6 languages (TS, JS, Python, Rust, Go, Java); Vektor Phase 1 covers 5
+  - `code-chunk` is chunking-only (no search, no context assembly); comparison is on chunking quality only
+  - Vektor's advantage is the full pipeline: chunking → embedding → hybrid search → context assembly
+- Publish comparison in `BENCHMARKS.md` alongside Function 6.4 results
+
 ---
 
 ## 12. Risks and Mitigations
@@ -2079,11 +2103,13 @@ Goal: Extended language support, packaging, benchmarks, advanced retrieval.
 - [ ] Benchmark results published and honest comparison vs Zilliz MCP documented
 - [ ] 100+ GitHub stars within 30 days of public launch
 
-### Competitive Benchmark (v2.1)
+### Competitive Benchmark (v2.1, updated v2.3)
 
 - [ ] Vektor vs CocoIndex Code: same codebase, same queries — measure Precision@5 and context quality
 - [ ] Vektor context assembly produces higher-quality agent responses than CocoIndex raw search (manual A/B evaluation)
 - [ ] Time-to-first-result on fresh project: Vektor <8s vs CocoIndex baseline
+- [ ] Vektor AST chunker vs Supermemory `code-chunk`: Recall@5 ≥ 70% on shared test codebases (matching or beating `code-chunk`'s published 70.1%)
+- [ ] Vektor chunking produces fewer total chunks than `code-chunk` for same codebase (lower embedding cost) while maintaining equal or better recall
 
 ---
 
