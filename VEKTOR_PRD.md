@@ -1,8 +1,8 @@
 # Vektor — Product Requirements Document
 
 > **Local-first · Real-time · Zero cloud dependency**
-> Codebase **context engine** MCP server built in Rust.
-> Not just search — intelligent context assembly for AI coding agents.
+> Local coding **context engine** MCP server built in Rust.
+> Task-specific, token-budgeted context for AI coding agents.
 > Matches Augment Code Context Engine · 100% your machine · 100% open source.
 
 ---
@@ -12,13 +12,13 @@
 | Field | Value |
 |---|---|
 | Project | Vektor |
-| Version | 2.3.0 |
-| Status | v2.3 — Context Engine + Agent DX + Accuracy/Performance + Database Architecture + Retrieval Accuracy hardening |
+| Version | 2.5.0 |
+| Status | v2.5 — Workflow-first context tools for AI coding agents |
 | Stack | Rust + ONNX Runtime + LanceDB (embedded) + Tantivy + MCP Protocol |
 | License | MIT (open source) |
 | Author | Dinesh |
 | Target User | Individual developers using Claude Code, Cursor, Codex CLI |
-| Goal | Production-grade context engine. Learn as you build. |
+| Goal | Production-grade local coding context engine. Learn as you build. |
 
 ---
 
@@ -31,13 +31,14 @@
 5. [Context Assembly Layer](#5-context-assembly-layer)
 6. [Embedding Backend Strategy](#6-embedding-backend-strategy)
 7. [Agent DX & Adoption Strategy](#7-agent-dx--adoption-strategy)
-8. [MCP Tools API](#8-mcp-tools-api)
-9. [Performance Targets](#9-performance-targets)
-10. [Technology Stack](#10-technology-stack)
-11. [Phased Implementation Plan](#11-phased-implementation-plan)
-12. [Risks and Mitigations](#12-risks-and-mitigations)
-13. [Success Metrics](#13-success-metrics)
-14. [Implementation Rules](#14-implementation-rules)
+8. [Coding Workflow Tools](#8-coding-workflow-tools)
+9. [MCP Tools API](#9-mcp-tools-api)
+10. [Performance Targets](#10-performance-targets)
+11. [Technology Stack](#11-technology-stack)
+12. [Phased Implementation Plan](#12-phased-implementation-plan)
+13. [Risks and Mitigations](#13-risks-and-mitigations)
+14. [Success Metrics](#14-success-metrics)
+15. [Implementation Rules](#15-implementation-rules)
 
 ---
 
@@ -45,25 +46,34 @@
 
 Vektor is a high-performance, local-first **codebase context engine** exposed as a Model Context
 Protocol (MCP) server. Built entirely in Rust, it gives Claude Code, Codex CLI, Cursor, and any
-MCP-compatible AI coding assistant the ability to deeply understand an entire codebase —
+MCP-compatible AI coding assistant task-specific context for real coding work —
 without sending code to the cloud, without requiring external API keys for core operation,
 and with real-time sub-500ms re-indexing triggered by OS file-save events.
 
 **The one-line pitch:**
-> *"Augment Code's Context Engine, but open source, local-first, and in Rust."*
+> *"A local coding context engine that gives AI agents the right files, tests, symbols, and risks for the task at hand."*
 
-**Search engine vs Context engine:**
-A search engine returns ranked results. A context engine assembles **token-budgeted, deduplicated,
-relationship-aware context packages** optimized for LLM consumption. Vektor is the latter.
-Its killer feature is `get_context_for_prompt` — an MCP tool that lets any AI agent say
-"give me the best context about authentication that fits in 8K tokens" and receive a curated
-package of code, docs, and related files ready for reasoning.
+**Core promise:**
+Vektor gives Codex, Claude Code, Cursor, and other MCP agents **task-specific, token-budgeted
+context** for implementing, debugging, testing, reviewing, refactoring, and onboarding in a
+codebase. Search and indexing are the foundation. The product centerpiece is workflow-first
+context assembly: given a failing test, git diff, feature request, stack trace, or new repo,
+Vektor returns the code, tests, configs, schemas, and warnings an agent needs to act.
+
+**Search engine vs Coding context engine:**
+A search engine returns ranked results. A coding context engine assembles **token-budgeted,
+deduplicated, relationship-aware context packages** optimized for LLM consumption and the
+developer workflow in front of the agent. Vektor is the latter. Its foundation tool,
+`get_context_for_prompt`, supports broad context requests; its workflow tools specialize that
+same assembly engine for common jobs like "fix this failing test", "review this diff",
+"find the right tests", and "explain this new project."
 
 **The problem it solves:**
 Claude Code has no persistent memory of your codebase. Every session starts from zero.
-Engineers burn tokens just discovering where relevant code lives. Vektor fixes this by
-maintaining a live, semantic index of your entire codebase — always up to date, always local,
-always fast — and delivering that context in exactly the right quantity and format for AI agents.
+Agents burn tokens and time rediscovering where relevant code lives, what tests cover a change,
+which configs or schemas are involved, and what module owns an error. Vektor fixes this by
+maintaining a live, local index of the entire codebase and delivering context in exactly the
+right quantity and format for the active coding job.
 
 **Why open source matters:**
 Augment Code charges $50+/seat/month and sends your code to Google Cloud. Vektor gives you
@@ -74,6 +84,7 @@ assembly logic for their specific needs.
 **Key differentiators vs competition (v2.1):**
 - **Two-tier indexing**: Keyword search available in <5s, full semantic index builds in background. Never blocks tool responses on indexing completion.
 - **Code-optimized embeddings**: Default model is Jina Embeddings v2 Base Code (768d, Apache 2.0) — 20-50% better retrieval vs general-purpose models.
+- **Workflow-first context tools**: Task, diff, error, test, and project-overview tools built on the same token-budgeted context assembly engine.
 - **Context assembly layer**: Token-budgeted, deduplicated, relationship-aware packages. CocoIndex Code (nearest open-source competitor) has no equivalent — it's search-only.
 - **Zero-config agent adoption**: Skills integration (SKILL.md), MCP server instructions, and first-run auto-indexing mean agents discover and use Vektor without manual setup.
 - **Explicit `token_budget`**: Augment does NOT expose this parameter to agents — Vektor gives agents direct control over context size.
@@ -82,20 +93,32 @@ assembly logic for their specific needs.
 
 ## 2. Problem Statement
 
-### 2.1 The Context Window Problem
+### 2.1 The Agent Coding Context Problem
 
 Claude Code and Codex CLI have no persistent knowledge of a codebase. Every session starts
 from zero. Engineers must manually provide context — pasting file contents, writing CLAUDE.md
 docs, or relying on Claude's grep/find tools which burn massive tokens just to discover where
 relevant code lives.
 
+The pain is not abstract retrieval. It shows up in concrete coding jobs:
+- Fixing a failing test requires the failing test, referenced code, nearby helpers, fixtures, and the likely command to re-run.
+- Debugging an error requires stack-trace paths, line numbers, symbols, owning modules, and related configs.
+- Reviewing a diff requires changed files, nearby symbols, relevant tests, affected schemas/configs, and a risk summary.
+- Implementing a feature requires entry points, similar existing code, tests, docs, and integration boundaries.
+- Refactoring requires callers, tests, generated files, config coupling, and missing-context warnings.
+- Onboarding to a new repo requires languages, frameworks, entry points, module layout, build/test commands, and architecture areas.
+
 ### 2.2 Current Tool Gaps
 
 | Problem | Current Workaround | Cost |
 |---|---|---|
 | No codebase memory | Paste files manually each session | High token burn, slow start |
+| Search results are not task-specific | Agent chains grep/find/read manually | Slow workflows, high token burn |
+| Failing tests lack owner context | Engineer traces test output manually | More back-and-forth before a fix |
+| Diffs lack impact context | Engineer mentally maps changed files to tests/configs | Missed regressions in review |
+| Errors lack code-aware parsing | Agent reads stack traces as plain text | Misses exact referenced symbols and modules |
 | Keyword search only | grep/find via Claude tools | Misses semantic relationships |
-| No dependency tracking | Engineer mentally maps imports | Missed side-effects in refactors |
+| No dependency/test discovery | Engineer mentally maps imports and test names | Missed side-effects in refactors |
 | Cloud embedding APIs required | OpenAI/VoyageAI API keys | Cost + latency + data privacy risk |
 | No real-time updates | Re-index entire codebase on change | Minutes of delay, stale results |
 | No project isolation | Single shared namespace | Collisions across projects |
@@ -126,6 +149,45 @@ relevant code lives.
 - No hybrid search (vector-only), no git history, no dependency graph
 - 918 GitHub stars in 6 weeks — validates market demand, good DX (Skills integration, zero-config)
 - Architecture ceiling is low: search-only, no context engine layer. Vektor surpasses it on every technical dimension.
+
+**CodeGraph (suatkocar)** — **architectural twin, lowest distribution** (v2.4 — added)
+- https://github.com/suatkocar/codegraph — Rust, ~3 stars, v0.2.5, single maintainer
+- Same stack DNA as Vektor: Jina v2 Base Code 768d + `rmcp` + RRF k=60 + hybrid (sqlite-vec FTS5) + token-budgeted assembly
+- 44 MCP tools, PageRank symbol importance, 32 tree-sitter grammars, 10 Claude Code lifecycle hooks (feedback-loop-adjacent)
+- **Gaps vs Vektor**: sqlite-vec instead of LanceDB (slower at >100K chunks), no recency weighting, no two-tier indexing, no explicit `report_context_quality` feedback loop, no multi-language stitching, no progressive context delivery
+- **Strategic read**: Feature-for-feature the closest existing project. Effectively invisible (~3 stars) so distribution is the gap, not the design. If they add a launch story, this becomes a direct substitute. **Vektor's wedge against CodeGraph is workflow-first context tools (Section 8) + Agent DX (Section 7).**
+
+**codebase-memory-mcp (DeusData)** — **mindshare threat** (v2.4 — added)
+- https://github.com/DeusData/codebase-memory-mcp — C, MIT, **2.3k stars**, v0.6.1 (May 2026)
+- Bundled `nomic-embed-code` 768d int8 (code-specific) compiled into single static binary, 155 languages via vendored tree-sitter
+- Knowledge-graph approach (typed edges, not chunks) + SQLite FTS5 BM25 + 11-signal scoring (TF-IDF, MinHash, graph diffusion, AST profiles)
+- 14 MCP tools, cross-service link analysis (HTTP/gRPC/GraphQL), claims ~3.4k tokens vs ~412k for grep
+- Indexes the Linux kernel in 3 minutes; high-quality blog distribution (russ.cloud)
+- **Gaps vs Vektor**: graph-first not chunk-first (worse for "give me the right 8k tokens" use case, better for "find all callers of X"); no per-request token budget API; no recency weighting; no feedback loop
+- **Strategic read**: Different philosophical bet. A user landing on this via the blog post won't shop further. Vektor needs an equivalent launch artifact to compete on discovery.
+
+**SocratiCode (giancarloerra)** — **feature-rich but AGPL-locked** (v2.4 — added)
+- https://github.com/giancarloerra/SocratiCode — TypeScript, **AGPL-3.0**, 2.5k stars, v-active May 2026
+- AST-aware chunking (ast-grep, 18+ langs), `nomic-embed-text` 768d (generic) via Ollama, Qdrant store, RRF hybrid
+- 21 MCP tools, polyglot dependency graphs, symbol-level impact analysis, claims 61% less context, 84% fewer agent calls
+- Local-first (Docker-managed Qdrant/Ollama)
+- **Gaps vs Vektor**: generic embeddings (not code-specific); no token-budgeted assembly with `budget_gap_reason`; **AGPL-3.0 blocks commercial adoption** — this is Vektor's permissive-MIT lane
+
+**Project RAG (Brainwires)** — **Rust stack twin** (v2.4 — added)
+- https://github.com/Brainwires/project-rag — Rust, MIT, 12 stars
+- Identical infra to Vektor: **LanceDB + Tantivy + RRF k=60**, 9 MCP tools incl. `search_git_history`, `find_definition`, `find_references`, `get_call_graph`
+- 413 tests, ~94% coverage — engineering-grade
+- **Gaps vs Vektor**: uses generic MiniLM-L6-v2 384d (NOT code-specific — 10-15% Precision@5 penalty); no context assembly layer; no token budgeting; no recency/feedback/two-tier
+- **Strategic read**: If they swap to Jina v2 Code and add a context assembler, they become Vektor. Currently low momentum, but the stack overlap is uncomfortably close. Validates the architecture choices but means architecture alone is not the moat.
+
+**Honorable mentions** (narrower or different category)
+- **codegraph-rust (Jakedismo)** — Rust, 313 stars, no license. SurrealDB + HNSW + cross-encoder reranker. Graph-first.
+- **Code Context Engine (elara-labs)** — Python, MIT, 101 stars. sqlite-vec + 50/30/20 vec/BM25/**recency** weighting (matches G22), graph-walk expansion, compression levels. Most ideologically aligned MCP project.
+- **Claude Context (zilliztech)** — TS, MIT, 11k stars. Mind-share leader, but **cloud-required** (Milvus/Zilliz + OpenAI) — fundamentally different positioning from Vektor's local-first.
+- **Veles (julymetodiev)** — Rust, 3 stars, created 2026-05-09. model2vec-rs static embeddings, RRF, 11 MCP tools. Brand new entrant validating the niche is actively forming.
+- **code-memory (kapillamba4)** — Python, 31 stars. Uses Jina code embeddings + sqlite-vec + BM25. Tiny, architecturally aligned.
+- **Tabby ML** / **Continue.dev** — assistant-locked retrieval, not MCP-server-shaped. Different product category.
+- **Bloop.ai** (historical context) — 9.5k stars, Apache-2.0, **archived 2026-01-02**. Closest historical stack to Vektor (Tantivy + Qdrant + tree-sitter + on-device embeddings). No active fork has emerged. **Vektor inherits this market gap.**
 
 **Sourcegraph Cody**
 - Repo-level Semantic Graph (RSG) with Expand-and-Refine traversal
@@ -163,32 +225,39 @@ relevant code lives.
 | G4 | Pluggable embedding: local ONNX, OpenAI-compatible API, Ollama | Critical | 1 |
 | G5 | Local vector database (LanceDB embedded) — zero cloud required | Critical | 1 |
 | G6 | Incremental indexing via SHA-256 file hash diffing | High | 1 |
-| G7 | **`get_context_for_prompt` — token-budgeted context assembly** | **Critical** | **1** |
-| G8 | **Context deduplication, ranking, and LLM-optimized formatting** | **Critical** | **1** |
-| G9 | **Related-file expansion (imports, tests, configs)** | **High** | **1** |
-| G10 | **Query result caching (LRU)** | **High** | **1** |
-| G11 | Dependency graph (import/export tracking per file) | High | 2 |
-| G12 | Multi-project isolation with per-project collections | High | 2 |
-| G13 | MCP-compliant server (stdio + SSE transport) | Critical | 1 |
-| G14 | Single compiled Rust binary — zero runtime dependencies | High | 1 |
-| G15 | Symbol-level search (find function by name across codebase) | Medium | 2 |
-| G16 | Git history indexing — commit messages + changed files searchable | Medium | 2 |
-| G17 | Workspace-aware — index docs (README, *.md) alongside code | Medium | 1 |
-| G18 | Precision@5 benchmark: beat Zilliz MCP retrieval accuracy | High | 3 |
-| G19 | Two-tier indexing: keyword search available in <5s, semantic in background | Critical | 1 |
-| G20 | Skills integration (SKILL.md) for zero-config agent adoption | High | 1 |
-| G21 | Code-optimized default embedding (Jina v2 Base Code, 768d) | Critical | 1 |
-| G22 | Recency-weighted ranking (recently modified files ranked higher) | High | 1 |
-| G23 | Context quality feedback tool (`report_context_quality`) | Medium | 2 |
-| G24 | Progressive context delivery for large token budgets | Medium | 2 |
-| G25 | Codestral Embed / Voyage Code 3 as cloud embedding options | Medium | 2 |
-| G26 | Content-addressed chunk IDs (stable across line movements) | Critical | 1 |
-| G27 | Delete-then-insert re-indexing (zero orphaned chunks) | Critical | 1 |
-| G28 | Static synonym expansion for BM25 (10-15% recall improvement) | High | 1 |
-| G29 | Adaptive hybrid search weights (identifier vs natural language queries) | High | 1 |
-| G30 | Graceful shutdown with flush-and-close sequence | High | 1 |
-| G31 | ONNX warm-up at server startup (eliminate cold-start latency) | High | 1 |
-| G32 | Chunk-level embedding cache (skip unchanged chunk re-embedding) | High | 1 |
+| G7 | **`get_context_for_prompt` — token-budgeted context assembly foundation** | **Critical** | **1** |
+| G8 | **`get_context_for_task` — task-aware context for implement/debug/fix/review/refactor/explain/test/security workflows** | **Critical** | **1** |
+| G9 | **`get_context_for_diff` — diff-aware context, related tests, and risk summary** | **Critical** | **1** |
+| G10 | **`get_context_for_error` — stack trace, compiler error, and test failure context** | **Critical** | **1** |
+| G11 | **`find_relevant_tests` — likely tests, fixtures, mocks, and test commands** | **High** | **1** |
+| G12 | **`get_project_overview` — languages, frameworks, entry points, commands, and architecture map** | **High** | **1** |
+| G13 | **Context result `reason` fields explaining why each chunk was included** | **High** | **1** |
+| G14 | **`missing_context_warnings` metadata when relevant context cannot be found or index coverage is incomplete** | **High** | **1** |
+| G15 | **Context deduplication, ranking, and LLM-optimized formatting** | **Critical** | **1** |
+| G16 | **Related-file expansion (imports, tests, configs)** | **High** | **1** |
+| G17 | **Query result caching (LRU)** | **High** | **1** |
+| G18 | MCP-compliant server (stdio + SSE transport) | Critical | 1 |
+| G19 | Single compiled Rust binary — zero runtime dependencies | High | 1 |
+| G20 | Workspace-aware — index docs (README, *.md) alongside code | Medium | 1 |
+| G21 | Two-tier indexing: keyword search available in <5s, semantic in background | Critical | 1 |
+| G22 | Skills integration (SKILL.md) for zero-config agent adoption | High | 1 |
+| G23 | Code-optimized default embedding (Jina v2 Base Code, 768d) | Critical | 1 |
+| G24 | Recency-weighted ranking (recently modified files ranked higher) | High | 1 |
+| G25 | Content-addressed chunk IDs (stable across line movements) | Critical | 1 |
+| G26 | Delete-then-insert re-indexing (zero orphaned chunks) | Critical | 1 |
+| G27 | Static synonym expansion for BM25 (10-15% recall improvement) | High | 1 |
+| G28 | Adaptive hybrid search weights (identifier vs natural language queries) | High | 1 |
+| G29 | Graceful shutdown with flush-and-close sequence | High | 1 |
+| G30 | ONNX warm-up at server startup (eliminate cold-start latency) | High | 1 |
+| G31 | Chunk-level embedding cache (skip unchanged chunk re-embedding) | High | 1 |
+| G32 | Dependency graph (import/export tracking per file) | High | 2 |
+| G33 | Multi-project isolation with per-project collections | High | 2 |
+| G34 | Supporting symbol-level search (`find_symbol`) | Medium | 2 |
+| G35 | Git history indexing — commit messages + changed files searchable | Medium | 2 |
+| G36 | Context quality feedback tool (`report_context_quality`) | Medium | 2 |
+| G37 | Progressive context delivery for large token budgets | Medium | 2 |
+| G38 | Codestral Embed / Voyage Code 3 as cloud embedding options | Medium | 2 |
+| G39 | Precision@5 benchmark: beat Zilliz MCP retrieval accuracy | High | 3 |
 
 ### 3.2 Non-Goals
 
@@ -210,7 +279,7 @@ Claude Code / Codex CLI / Cursor / Any MCP Client
 ┌──────────────────────────────────────────────────────┐
 │                 Vektor (Rust Binary)                  │
 ├──────────────────────────────────────────────────────┤
-│  MCP Server (rmcp)  →  Tool Handlers (8 tools)       │
+│  MCP Server (rmcp)  →  Tool Handlers (workflow+admin)│
 ├──────────────────────────────────────────────────────┤
 │         ★ Context Assembly Layer ★                    │
 │  ┌──────────┬───────────┬──────────┬───────────┐     │
@@ -684,6 +753,7 @@ pub struct ContextPackage {
     pub files_included: Vec<String>, // all files represented
     pub total_tokens: usize,         // actual token count
     pub budget_used_pct: f32,        // how much of budget was used
+    pub missing_context_warnings: Vec<String>, // gaps agents should know about (v2.5)
     pub search_metadata: SearchMeta, // timing, scores, cache hit
     pub result_confidence: Confidence, // high/medium/low (v2.3)
     pub budget_gap_reason: Option<GapReason>, // why budget wasn't fully used (v2.3)
@@ -718,6 +788,7 @@ pub struct ContextChunk {
     pub symbol: Option<String>,
     pub relevance_score: f32,        // combined RRF score
     pub source: ChunkSource,         // Search | Related | Dependency
+    pub reason: String,              // why this chunk was included (v2.5)
 }
 ```
 
@@ -836,11 +907,11 @@ For large token budgets (>16K tokens), return context in layers to help agents d
 - `include_summary` parameter (default: false) in `get_context_for_prompt` enables Layer 1 mode
 - Reduces token consumption by 40-60% when agents only need an overview
 
-### 5.8 Context Quality Feedback Loop
+### 5.8 Context Quality Feedback Loop (Phase 2)
 
-Closed-loop learning from agent feedback to improve future context assembly.
+Deferred Phase 2 closed-loop learning from agent feedback to improve future context assembly.
 
-- `report_context_quality` MCP tool (see Section 8) accepts per-chunk usefulness signals
+- `report_context_quality` MCP tool (see Section 9) accepts per-chunk usefulness signals
 - **Feedback keying (v2.2.1 refined):**
   - AST chunks (with symbol_name): keyed on `(rel_path, symbol_name)` — survives re-indexing
   - Sliding-window chunks (no symbol_name): keyed on `(rel_path, start_line_bucket)` where
@@ -1012,8 +1083,9 @@ requiring MCP server configuration. Vektor ships a Skills file for zero-config d
 - Installation: `npx skills add vektor` (for npm-based agents)
 
 **Skill content describes:**
-- All 8 MCP tools with usage guidance and example queries
-- When to use `get_context_for_prompt` vs `search_code`
+- All 8 primary workflow MCP tools with usage guidance and example queries
+- When to use `get_context_for_task`, `get_context_for_diff`, `get_context_for_error`,
+  `find_relevant_tests`, `get_project_overview`, `get_context_for_prompt`, and `search_code`
 - How to interpret `index_status` in responses
 - Recommended `token_budget` values for different agent contexts
 
@@ -1022,7 +1094,7 @@ requiring MCP server configuration. Vektor ships a Skills file for zero-config d
 On first tool call (any tool), Vektor detects an unindexed project and responds gracefully:
 
 ```
-1. Agent calls get_context_for_prompt("how does auth work", budget=8000)
+1. Agent calls `get_context_for_task(task_type="fix_test", task="Fix failing auth expiry test", budget=8000)`
 2. Vektor detects: no index exists for this project path
 3. Immediate response (0ms): { results: [], index_status: "building", message: "Starting index..." }
 4. Background: Shallow index begins (file walk + Tantivy BM25 from paths + first 50 lines)
@@ -1043,10 +1115,13 @@ ensure Vektor tools are found by Claude Code's Tool Search (BM25 on tool descrip
 
 **Server instructions content:**
 ```
-Vektor is a local-first codebase context engine. Use get_context_for_prompt to get
-token-budgeted, deduplicated code context for any query. Use search_code for hybrid
-semantic + keyword code search. Use index_codebase to trigger indexing. All operations
-are local — no code leaves the developer's machine.
+Vektor is a local-first coding context engine for AI agents. Use get_context_for_task
+for implementation, debugging, test-fixing, review, refactor, explain, test-writing,
+and security-review workflows. Use get_context_for_diff for git diffs, get_context_for_error
+for stack traces/compiler errors/test failures, find_relevant_tests for test discovery,
+get_project_overview for new repos, get_context_for_prompt for broad token-budgeted context,
+and search_code for raw hybrid semantic + keyword search. Use index_codebase to trigger
+indexing. All operations are local — no code leaves the developer's machine.
 ```
 
 ### 7.5 MCP Resources
@@ -1079,18 +1154,134 @@ claude mcp add --transport stdio vektor -- vektor serve
 
 ---
 
-## 8. MCP Tools API
+## 8. Coding Workflow Tools
 
-Vektor exposes 8 MCP tools callable by Claude Code, Codex CLI, Cursor, and any MCP client.
+Phase 1 centers on workflow-first context assembly. Indexing, embeddings, BM25, vector search,
+AST chunking, and related-file expansion are the engine underneath these tools; they are not
+the product story by themselves.
 
-> **v2.1 change:** All tool responses now include `index_status` and `index_coverage_pct`
-> fields so agents know the quality of results they're receiving (see Section 4.4).
+### 8.1 Primary Phase 1 Tool Contract
 
-### Primary Tools (used by agents in every session)
+Vektor first ships 8 primary workflow MCP tools:
 
-#### `get_context_for_prompt` — THE KILLER FEATURE
-Assembles a token-budgeted, deduplicated, relationship-aware context package optimized for
-LLM consumption. This is what makes agents 30-80% more effective.
+| Tool | Purpose |
+|---|---|
+| `index_codebase` | Build or refresh the local index for a project. |
+| `search_code` | Return raw hybrid BM25 + semantic results for agents that need direct search. |
+| `get_context_for_prompt` | Assemble broad token-budgeted context from a natural-language query. |
+| `get_context_for_task` | Assemble context for a declared coding task type. |
+| `get_context_for_diff` | Parse a supplied diff and return changed files, related tests, affected configs/schemas, risks, and warnings. |
+| `get_context_for_error` | Parse stack traces, compiler errors, and test failures into referenced code plus related context. |
+| `find_relevant_tests` | Find likely unit, integration, and E2E tests, fixtures/mocks, and suggested test commands. |
+| `get_project_overview` | Summarize languages, frameworks, entry points, commands, configs, and architecture areas for a repo. |
+
+`get_index_status` and `clear_index` are maintenance/admin capabilities. They should be
+available to agents, but they are not counted as the primary workflow product surface.
+
+`find_symbol`, `find_dependencies`, and `report_context_quality` are deferred supporting
+tools. They are useful once deeper graph precision and feedback learning exist, but Phase 1
+should not depend on them as the headline API.
+
+### 8.2 Workflow Behavior Principles
+
+All workflow tools return context packages with:
+- `reason` on every returned chunk or file explaining why it was included.
+- `missing_context_warnings` when referenced files, symbols, tests, configs, schemas, or
+  dependency edges could not be found.
+- `index_status` and `index_coverage_pct` so agents can judge whether context is partial.
+- `result_confidence` and `suggested_action` when the tool believes the agent should broaden,
+  narrow, wait for indexing, or inspect a missing file manually.
+
+Phase 1 should be honest and useful, not magically perfect. Workflow tools may use heuristics,
+AST symbols, file naming conventions, manifests, imports, recency, test-pattern detection, and
+lightweight diff/error parsing before full LSP precision, call graphs, and dependency graphs
+exist. Advanced precision features move to later phases.
+
+### 8.3 Workflow Mapping
+
+| Coding job | Preferred tool | Expected context |
+|---|---|---|
+| Implement a feature | `get_context_for_task` with `task_type="implement_feature"` | Entry points, similar code, tests, docs, configs, integration boundaries. |
+| Debug a runtime error | `get_context_for_error` | Referenced code, stack frames, owner module, related callers/tests/configs. |
+| Fix a failing test | `get_context_for_error` or `get_context_for_task` with `task_type="fix_test"` | Failing test, referenced production code, fixtures, mocks, likely command. |
+| Review a patch | `get_context_for_diff` | Changed files, nearby symbols, related tests, affected schemas/configs, risk summary. |
+| Refactor code | `get_context_for_task` with `task_type="refactor"` | Target code, callers/importers when available, tests, related configs. |
+| Write tests | `find_relevant_tests` + `get_context_for_task` with `task_type="write_tests"` | Existing test patterns, fixtures, mocks, target code, test commands. |
+| Onboard to a repo | `get_project_overview` | Languages, frameworks, layout, commands, entry points, architecture map. |
+| Broad exploration | `get_context_for_prompt` | Token-budgeted context for a natural-language query. |
+
+## 9. MCP Tools API
+
+Vektor exposes 8 primary workflow MCP tools callable by Claude Code, Codex CLI, Cursor,
+and any MCP client, plus maintenance/admin tools and later supporting tools.
+
+> **v2.5 rule:** All primary workflow tool responses include `index_status`,
+> `index_coverage_pct`, `result_confidence`, and `missing_context_warnings` so agents know
+> the quality and gaps in the context they are receiving (see Section 4.4).
+
+### Primary Phase 1 Workflow Tools
+
+#### `index_codebase`
+Index or incrementally update a codebase. Uses SHA-256 file hash diffing — only changed
+files are re-processed. Also indexes documentation files (*.md, *.txt, *.rst).
+
+```json
+{
+  "path": "/absolute/path/to/project",
+  "force_full": false,
+  "extensions": [".py", ".ts", ".md"],
+  "embedding_backend": "onnx"
+}
+```
+
+#### `search_code`
+Hybrid BM25 + semantic vector search. Returns raw ranked results for agents that need direct
+search or want to assemble custom context.
+
+```json
+{
+  "path": "/absolute/path/to/project",
+  "query": "function that handles JWT token validation",
+  "top_k": 8,
+  "mode": "hybrid",
+  "filter_ext": [".py"],
+  "bypass_cache": false
+}
+```
+
+`mode` options: `hybrid` (default), `semantic` (vector only), `keyword` (BM25 only)
+
+Response:
+```json
+{
+  "results": [
+    {
+      "file": "src/auth/jwt.py",
+      "lines": "42-67",
+      "symbol": "validate_token",
+      "type": "function_definition",
+      "language": "python",
+      "score": 0.891,
+      "reason": "Top hybrid match for JWT validation query",
+      "snippet": "def validate_token(token: str) -> Claims:\n    ..."
+    }
+  ],
+  "metadata": {
+    "search_time_ms": 32,
+    "mode": "hybrid",
+    "cache_hit": false,
+    "index_status": "full",
+    "index_coverage_pct": 99.8,
+    "result_confidence": "high",
+    "missing_context_warnings": []
+  }
+}
+```
+
+#### `get_context_for_prompt`
+Assembles a broad token-budgeted, deduplicated, relationship-aware context package optimized
+for LLM consumption. Use this when the agent has a natural-language query that does not fit a
+more specific workflow tool.
 
 ```json
 {
@@ -1118,6 +1309,7 @@ Response:
       "language": "python",
       "relevance": 0.891,
       "source": "search",
+      "reason": "Primary symbol match for authentication/session query",
       "content": "def validate_token(token: str) -> Claims:\n    ..."
     },
     {
@@ -1128,6 +1320,7 @@ Response:
       "language": "python",
       "relevance": 0.72,
       "source": "related",
+      "reason": "Middleware imports the JWT validation module",
       "content": "class AuthMiddleware:\n    ..."
     },
     {
@@ -1138,6 +1331,7 @@ Response:
       "language": "python",
       "relevance": 0.45,
       "source": "related",
+      "reason": "Direct test file matching src/auth/jwt.py",
       "content": "def test_validate_token():\n    ..."
     }
   ],
@@ -1153,6 +1347,7 @@ Response:
     "index_coverage_pct": 99.8,
     "result_confidence": "high",
     "budget_gap_reason": "no_more_relevant",
+    "missing_context_warnings": [],
     "suggested_action": null,
     "clusters": [
       {"path": "src/auth/jwt", "chunk_count": 3, "avg_relevance": 0.85},
@@ -1175,61 +1370,212 @@ npm workspaces, Go modules).
 - `"result_confidence": "medium"` + `"budget_gap_reason": "index_incomplete"` → agent waits for full index
 - `"clusters"` field appears when results span >2 distinct code areas, enabling disambiguation
 
-#### `search_code`
-Hybrid BM25 + semantic vector search. Returns raw ranked results (for agents that want
-to assemble context themselves).
+#### `get_context_for_task`
+Thin task-aware wrapper over the context assembly engine. It maps a coding task type to
+query expansion, related-file expansion, and output metadata tuned for that workflow.
+
+Supported `task_type` values:
+`implement_feature`, `debug_error`, `fix_test`, `review_diff`, `refactor`, `explain_code`,
+`write_tests`, `security_review`.
 
 ```json
 {
   "path": "/absolute/path/to/project",
-  "query": "function that handles JWT token validation",
-  "top_k": 8,
-  "mode": "hybrid",
-  "filter_ext": [".py"],
-  "bypass_cache": false
+  "task_type": "fix_test",
+  "task": "Fix failing auth token expiry tests",
+  "focus_files": ["tests/test_auth.py"],
+  "token_budget": 8000,
+  "scope": "services/api"
 }
 ```
-
-`mode` options: `hybrid` (default), `semantic` (vector only), `keyword` (BM25 only)
 
 Response:
 ```json
 {
-  "results": [
+  "context": [
     {
-      "file": "src/auth/jwt.py",
-      "lines": "42-67",
-      "symbol": "validate_token",
-      "type": "function_definition",
-      "language": "python",
-      "score": 0.891,
-      "snippet": "def validate_token(token: str) -> Claims:\n    ..."
+      "file": "tests/test_auth.py",
+      "lines": "10-48",
+      "symbol": "test_expired_token_rejected",
+      "source": "task_focus",
+      "reason": "Explicit focus file and failing-test-like symbol name",
+      "content": "def test_expired_token_rejected():\n    ..."
     }
   ],
   "metadata": {
-    "search_time_ms": 32,
-    "mode": "hybrid",
-    "cache_hit": false,
+    "task_type": "fix_test",
+    "files_included": 4,
+    "total_tokens": 5870,
     "index_status": "full",
-    "index_coverage_pct": 99.8
+    "index_coverage_pct": 99.8,
+    "result_confidence": "high",
+    "missing_context_warnings": [],
+    "suggested_action": "Run pytest tests/test_auth.py -k expired"
   }
 }
 ```
 
-### Indexing Tools
-
-#### `index_codebase`
-Index or incrementally update a codebase. Uses SHA-256 file hash diffing — only changed
-files are re-processed. Also indexes documentation files (*.md, *.txt, *.rst).
+#### `get_context_for_diff`
+Parses a supplied diff and returns changed files, nearby symbols, relevant tests, affected
+configs/schemas, risk summary, and missing-context warnings. Phase 1 can parse unified diffs
+heuristically; later phases can add git history and LSP-assisted precision.
 
 ```json
 {
   "path": "/absolute/path/to/project",
-  "force_full": false,
-  "extensions": [".py", ".ts", ".md"],
-  "embedding_backend": "onnx"
+  "diff": "diff --git a/src/auth/jwt.py b/src/auth/jwt.py\n...",
+  "token_budget": 8000,
+  "include_risk_summary": true
 }
 ```
+
+Response:
+```json
+{
+  "changed_files": ["src/auth/jwt.py"],
+  "nearby_symbols": [
+    {"file": "src/auth/jwt.py", "symbol": "validate_token", "lines": "42-67"}
+  ],
+  "relevant_tests": ["tests/test_auth.py", "tests/integration/test_login.py"],
+  "affected_configs_schemas": ["config/auth.yml"],
+  "risk_summary": [
+    "JWT expiry behavior changed; login/session tests are likely affected.",
+    "Auth config defaults are nearby and should be checked."
+  ],
+  "context": [
+    {
+      "file": "src/auth/jwt.py",
+      "lines": "35-80",
+      "source": "diff_neighborhood",
+      "reason": "Changed hunk overlaps validate_token",
+      "content": "def validate_token(token: str) -> Claims:\n    ..."
+    }
+  ],
+  "metadata": {
+    "index_status": "full",
+    "index_coverage_pct": 99.8,
+    "result_confidence": "high",
+    "missing_context_warnings": []
+  }
+}
+```
+
+#### `get_context_for_error`
+Parses stack traces, compiler errors, test failures, file paths, line numbers, symbols, and
+package names. Returns exact referenced code plus related context, including likely owner
+module and tests when detectable.
+
+```json
+{
+  "path": "/absolute/path/to/project",
+  "error_text": "FAILED tests/test_auth.py::test_expired_token_rejected\nE AssertionError...\nsrc/auth/jwt.py:57",
+  "token_budget": 8000
+}
+```
+
+Response:
+```json
+{
+  "parsed_references": [
+    {"file": "tests/test_auth.py", "line": 21, "symbol": "test_expired_token_rejected"},
+    {"file": "src/auth/jwt.py", "line": 57, "symbol": "validate_token"}
+  ],
+  "likely_owner_module": "src/auth",
+  "context": [
+    {
+      "file": "src/auth/jwt.py",
+      "lines": "42-67",
+      "symbol": "validate_token",
+      "source": "error_reference",
+      "reason": "Error text references src/auth/jwt.py:57",
+      "content": "def validate_token(token: str) -> Claims:\n    ..."
+    }
+  ],
+  "related_tests": ["tests/test_auth.py"],
+  "metadata": {
+    "index_status": "full",
+    "index_coverage_pct": 99.8,
+    "result_confidence": "high",
+    "missing_context_warnings": []
+  }
+}
+```
+
+#### `find_relevant_tests`
+Returns likely unit, integration, and E2E tests, fixtures/mocks, and suggested test commands
+when detectable from manifests, package scripts, Cargo metadata, pytest config, npm scripts,
+Makefiles, and local file naming conventions.
+
+```json
+{
+  "path": "/absolute/path/to/project",
+  "target_files": ["src/auth/jwt.py", "src/auth/middleware.py"],
+  "changed_symbols": ["validate_token"],
+  "include_commands": true
+}
+```
+
+Response:
+```json
+{
+  "unit_tests": ["tests/test_auth.py"],
+  "integration_tests": ["tests/integration/test_login.py"],
+  "e2e_tests": [],
+  "fixtures_mocks": ["tests/fixtures/tokens.py"],
+  "suggested_commands": [
+    "pytest tests/test_auth.py",
+    "pytest tests/integration/test_login.py -k auth"
+  ],
+  "metadata": {
+    "index_status": "full",
+    "index_coverage_pct": 99.8,
+    "result_confidence": "medium",
+    "missing_context_warnings": ["No E2E test directory detected"]
+  }
+}
+```
+
+#### `get_project_overview`
+Returns a compact onboarding package for a repository: languages, frameworks, entry points,
+module layout, test frameworks, build/test commands, important config files, and major
+architectural areas.
+
+```json
+{
+  "path": "/absolute/path/to/project",
+  "token_budget": 6000,
+  "scope": null
+}
+```
+
+Response:
+```json
+{
+  "languages": [{"name": "Python", "files": 214}, {"name": "TypeScript", "files": 87}],
+  "frameworks": ["FastAPI", "React", "pytest", "Vite"],
+  "entry_points": ["src/server.py", "web/src/main.tsx"],
+  "module_layout": [
+    {"path": "src/auth", "purpose": "authentication and sessions"},
+    {"path": "src/api", "purpose": "HTTP route handlers"}
+  ],
+  "test_frameworks": ["pytest", "vitest"],
+  "commands": {
+    "build": ["npm run build"],
+    "test": ["pytest", "npm test"],
+    "dev": ["uvicorn src.server:app --reload", "npm run dev"]
+  },
+  "important_config_files": ["pyproject.toml", "package.json", "vite.config.ts"],
+  "major_architectural_areas": ["API service", "authentication", "frontend client"],
+  "metadata": {
+    "index_status": "partial",
+    "index_coverage_pct": 62.4,
+    "result_confidence": "medium",
+    "missing_context_warnings": ["Semantic index still building; overview may miss generated entry points"]
+  }
+}
+```
+
+### Maintenance/Admin Tools
 
 #### `get_index_status`
 Returns indexing stats, health, and coverage.
@@ -1261,10 +1607,12 @@ Wipe index for a project. Next `index_codebase` will do a full re-index.
 { "path": "/absolute/path/to/project" }
 ```
 
-### Discovery Tools (Phase 2)
+### Supporting Tools (Phase 2+)
 
 #### `find_symbol`
-Locate where a specific function, class, or variable is defined.
+Locate where a specific function, class, or variable is defined. Deferred out of the Phase 1
+headline API because workflow tools can use AST symbol metadata internally without exposing
+a dedicated symbol-search product surface.
 
 ```json
 {
@@ -1275,7 +1623,8 @@ Locate where a specific function, class, or variable is defined.
 ```
 
 #### `find_dependencies`
-Returns dependency graph: what a file imports OR what files import this file.
+Returns dependency graph: what a file imports OR what files import this file. Deferred until
+the Phase 2 dependency graph exists; Phase 1 workflow tools use import/file-name heuristics.
 
 ```json
 {
@@ -1285,11 +1634,10 @@ Returns dependency graph: what a file imports OR what files import this file.
 }
 ```
 
-### Feedback Tools (Phase 2)
-
 #### `report_context_quality`
 Accepts agent feedback on which context chunks were useful vs irrelevant. Enables
-closed-loop learning for improved ranking over time (see Section 5.8).
+closed-loop learning for improved ranking over time (see Section 5.8). Deferred because Phase 1
+should ship useful workflow tools before relying on explicit feedback loops.
 
 ```json
 {
@@ -1342,7 +1690,7 @@ Vektor exposes MCP Resources for passive context subscription (see Section 7.5):
 
 ---
 
-## 9. Performance Targets
+## 10. Performance Targets
 
 | Metric | Target | Stretch Goal | Comparison |
 |---|---|---|---|
@@ -1354,6 +1702,9 @@ Vektor exposes MCP Resources for passive context subscription (see Section 7.5):
 | `search_code` (local ONNX embed) | <150ms (P95) | <100ms (P50) | Zilliz: ~400ms (cloud RTT) (v2.3 revised) |
 | `search_code` (cloud API embed query) | <300ms | <150ms | Zilliz: ~600ms |
 | **`get_context_for_prompt`** (local ONNX) | **<200ms** | **<100ms** | Augment: ~200ms (cloud) (v2.3 revised) |
+| **`get_context_for_task`** (local ONNX) | **<250ms** | **<150ms** | Thin wrapper over context assembly |
+| **`get_context_for_diff` / `get_context_for_error`** | **<300ms** | **<180ms** | Includes parsing + exact-reference lookup |
+| **`find_relevant_tests` / `get_project_overview`** | **<200ms** | **<100ms** | Heuristic + manifest-driven |
 | **Context assembly overhead** | **<10ms** | **<5ms** | (dedup + budget + format) |
 | **Cache hit response** | **<5ms** | **<2ms** | — |
 | Binary size (without ONNX runtime) | <50MB | <30MB | — |
@@ -1376,7 +1727,7 @@ Vektor exposes MCP Resources for passive context subscription (see Section 7.5):
 
 ---
 
-## 10. Technology Stack
+## 11. Technology Stack
 
 | Component | Crate | Why |
 |---|---|---|
@@ -1412,7 +1763,7 @@ Vektor exposes MCP Resources for passive context subscription (see Section 7.5):
 name = "vektor"
 version = "0.1.0"
 edition = "2021"
-description = "Local-first codebase indexing MCP server"
+description = "Local-first coding context engine MCP server"
 license = "MIT"
 
 [dependencies]
@@ -1478,17 +1829,19 @@ sysinfo = "0.32"
 
 ---
 
-## 11. Phased Implementation Plan
+## 12. Phased Implementation Plan
 
 > **Core principle: One function at a time. Understand every line before moving to the next.**
 > Each function below is a discrete unit of work. Implement, test, understand, then proceed.
 
 ---
 
-### Phase 1 — Core Engine (Weeks 1–6)
+### Phase 1 — Workflow-First Context Assembly (Weeks 1–6)
 
-Goal: Working MCP server that indexes a codebase and serves hybrid search results
-with local ONNX embeddings. No real-time watching yet.
+Goal: Working MCP server that indexes a codebase and serves workflow-specific, token-budgeted
+context packages for implementation, debugging, test fixing, diff review, test discovery, and
+project onboarding. Hybrid search, indexing, and local ONNX embeddings are the foundation.
+No real-time watching yet.
 
 > **Timeline note:** 6 weeks is realistic for production-grade code with thorough testing.
 > The first 2 weeks build foundational Rust skills. Weeks 3-4 tackle the complex embedding
@@ -1738,7 +2091,10 @@ pub trait Embedder: Send + Sync {
 
 **Function 4.7: MCP server bootstrap**
 - Initialize `rmcp` server
-- Register 8 tools (get_context_for_prompt, search_code, index_codebase, get_index_status, find_symbol, find_dependencies, clear_index, report_context_quality)
+- Register 8 primary workflow tools: `index_codebase`, `search_code`, `get_context_for_prompt`,
+  `get_context_for_task`, `get_context_for_diff`, `get_context_for_error`,
+  `find_relevant_tests`, `get_project_overview`
+- Register maintenance/admin tools separately: `get_index_status`, `clear_index`
 - Handle tool dispatch in a `match` block
 - Run stdio transport loop
 - What you learn: MCP protocol, stdio JSON-RPC, async server loops in tokio
@@ -1747,16 +2103,21 @@ pub trait Embedder: Send + Sync {
 - `handle_index_codebase(args)` — parse args, call `index_codebase()`, serialize response
 - `handle_search_code(args)` — parse args, call `search_hybrid()`, serialize response
 - `handle_get_context_for_prompt(args)` — parse args, call context assembly pipeline
+- `handle_get_context_for_task(args)` — parse task type, build task-aware query plan, assemble context
+- `handle_get_context_for_diff(args)` — parse unified diff, resolve changed files/symbols/tests, assemble context
+- `handle_get_context_for_error(args)` — parse stack traces/compiler errors/test failures, assemble context
+- `handle_find_relevant_tests(args)` — resolve test files, fixtures/mocks, and suggested commands
+- `handle_get_project_overview(args)` — detect languages/frameworks/entry points/commands/layout
 - `handle_get_status(args)` — query `HashStore` and `VectorStore` for stats
 - `handle_clear_index(args)` — drop LanceDB table + Tantivy index + hash store
 - What you learn: JSON deserialization in Rust, error handling across async boundaries
 
 ---
 
-#### Weeks 5–6 — Context Assembly Layer (THE DIFFERENTIATOR)
+#### Weeks 5–6 — Workflow Context Assembly Layer (THE DIFFERENTIATOR)
 
-> This is what transforms Vektor from a search engine into a context engine.
-> Without this, we're just a better grep. With this, we compete with Augment.
+> This is what transforms Vektor from a search foundation into a coding context engine.
+> Without workflow context packages, agents still have to stitch together the task story manually.
 
 **Function CA.1: `TokenCounter::estimate(text: &str) -> usize`**
 - Fast heuristic: `tokens ≈ bytes / 3.5` for code
@@ -1799,8 +2160,10 @@ pub trait Embedder: Send + Sync {
   4. If `include_related`: expand with `RelatedExpander`
   5. Sort all chunks by relevance descending
   6. Greedy token budget allocation (include chunks until budget exhausted)
-  7. Format into `ContextPackage`
-  8. Store in cache
+  7. Add `reason` fields for every chunk
+  8. Add `missing_context_warnings` for unresolved files/symbols/tests/configs or partial index coverage
+  9. Format into `ContextPackage`
+  10. Store in cache
 - What you learn: pipeline composition, struct builders in Rust
 
 **Function CA.6: `handle_get_context_for_prompt(args) -> Result<ContextPackage>`**
@@ -1857,8 +2220,46 @@ pub trait Embedder: Send + Sync {
 - Total warm-up cost: ~400-600ms at startup — acceptable
 - What you learn: ONNX session lifecycle, shape-specific JIT compilation, startup optimization
 
-**Skills file: `.claude/skills/vektor/SKILL.md`** (v2.1)
-- Create Skills file describing all 8 MCP tools with usage guidance
+**Function CA.13: `TaskContextPlanner::plan(task_type, task, focus_files) -> WorkflowContextPlan`** (v2.5)
+- Validate task type: `implement_feature`, `debug_error`, `fix_test`, `review_diff`, `refactor`,
+  `explain_code`, `write_tests`, `security_review`
+- Convert task type into query expansion, related-file expansion strategy, preferred chunk sources,
+  and expected output warnings
+- Thin wrapper only: delegates ranking, deduplication, budgeting, and formatting to `ContextAssembler`
+- What you learn: enum-driven workflow design without duplicating retrieval logic
+
+**Function CA.14: `DiffContextBuilder::from_unified_diff(diff: &str) -> DiffContextRequest`** (v2.5)
+- Parse changed files, hunk line ranges, added/removed symbols when visible, and nearby config/schema paths
+- Fetch nearby AST chunks for changed hunks
+- Call `find_relevant_tests` for changed files
+- Produce a lightweight risk summary from file types, symbols, tests, configs, and schemas
+- Add `missing_context_warnings` for deleted files, generated files, missing tests, or unresolved paths
+- What you learn: structured parsing of unified diffs and conservative risk heuristics
+
+**Function CA.15: `ErrorContextBuilder::parse(error_text: &str) -> ErrorContextRequest`** (v2.5)
+- Extract file paths, line numbers, test identifiers, symbols, compiler diagnostics, package/module names
+- Fetch exact referenced code first, then nearby symbols and related tests/configs
+- Identify likely owner module from path prefixes and manifest package names
+- Add warnings when a referenced file/line/symbol is not indexed or cannot be resolved
+- What you learn: resilient parsing of noisy tool output and exact-reference prioritization
+
+**Function CA.16: `TestFinder::find(target_files, changed_symbols) -> RelevantTests`** (v2.5)
+- Detect unit/integration/E2E tests from naming conventions and directory layout
+- Detect fixtures/mocks adjacent to matched tests
+- Infer commands from `pyproject.toml`, `pytest.ini`, `Cargo.toml`, `package.json`, `Makefile`,
+  and common framework defaults
+- Return confidence and warnings when test commands or suites are ambiguous
+- What you learn: manifest parsing, test-pattern heuristics, command inference
+
+**Function CA.17: `ProjectOverviewBuilder::build(root: &Path) -> ProjectOverview`** (v2.5)
+- Detect languages, frameworks, entry points, module layout, test frameworks, build/test commands,
+  important config files, and major architectural areas
+- Prefer manifests and standard config files over arbitrary search results
+- Return a token-budgeted overview suitable for onboarding an agent to a new repo
+- What you learn: repo archetype detection and concise architecture summarization
+
+**Skills file: `.claude/skills/vektor/SKILL.md`** (v2.5)
+- Create Skills file describing all 8 primary workflow MCP tools with usage guidance
 - Include example queries and recommended parameter values
 - Shipped as part of `vektor init` or `npx skills add vektor`
 
@@ -2022,12 +2423,20 @@ Goal: Extended language support, packaging, benchmarks, advanced retrieval.
 - **Key differences to account for:**
   - `code-chunk` supports 6 languages (TS, JS, Python, Rust, Go, Java); Vektor Phase 1 covers 5
   - `code-chunk` is chunking-only (no search, no context assembly); comparison is on chunking quality only
-  - Vektor's advantage is the full pipeline: chunking → embedding → hybrid search → context assembly
+  - Vektor's advantage is the full pipeline: chunking → embedding → hybrid search → workflow context assembly
 - Publish comparison in `BENCHMARKS.md` alongside Function 6.4 results
+
+**Function 6.6: LSP-assisted precision layer**
+- Optionally use local language servers to refine definitions, references, diagnostics, and
+  call relationships after the heuristic Phase 1 workflow tools have shipped
+- Keep this optional: Vektor must remain useful without requiring every repo to have an LSP configured
+- Use LSP output to improve `get_context_for_diff`, `get_context_for_error`, `find_relevant_tests`,
+  `find_symbol`, and `find_dependencies`
+- What you learn: editor protocol integration, graceful degradation, precision-vs-setup trade-offs
 
 ---
 
-## 12. Risks and Mitigations
+## 13. Risks and Mitigations
 
 | Risk | Severity | Mitigation |
 |---|---|---|
@@ -2040,6 +2449,7 @@ Goal: Extended language support, packaging, benchmarks, advanced retrieval.
 | Crash during large initial index | Medium | Per-file status tracking in HashStore (`pending`/`indexed`/`failed`). Resume from where it left off. |
 | LanceDB Arrow dependency weight | Low | Arrow is a production dependency used by Databricks, Snowflake, etc. Acceptable binary size trade-off for reliability. |
 | Anthropic ships native indexing in Claude Code | Low | Vektor remains valuable: local, open, multi-provider embeddings, dependency graph |
+| OSS competitive density — 6+ Rust/MCP code-context projects shipped Nov 2025 → May 2026 (CodeGraph, codebase-memory-mcp, Project RAG, SocratiCode, codegraph-rust, Veles) | **High** | **v2.5 finding:** architecture alone is no longer the moat. Differentiation is the *integrated* Section 5 + Section 8 stack: workflow-first context tools + token-budgeted assembly + recency + two-tier indexing + Agent DX (Skills, server_instructions, MCP Resources) + Jina v2 Code default. Ship Phase 1 fast — window is open but closing. Track CodeGraph (architectural twin) and codebase-memory-mcp (mindshare) as primary benchmarks. |
 | Jina v2 Base Code model download (~300MB) larger than bge-small (~130MB) | Low | Progress bar via `indicatif`. Offer `--lite` flag for bge-small fallback. First download only. |
 | Skills standard evolving (agentskills.io) | Low | SKILL.md is simple markdown — easy to update format. Minimal maintenance burden. |
 | Two-tier indexing adds complexity to tool handlers | Medium | Clear `IndexPhase` enum. All handlers check status via `IndexStatusTracker` before choosing search mode. Well-tested state machine. |
@@ -2054,29 +2464,42 @@ Goal: Extended language support, packaging, benchmarks, advanced retrieval.
 
 ---
 
-## 13. Success Metrics
+## 14. Success Metrics
 
 ### Phase 1 — Must Have (before Phase 2 starts)
 
 - [ ] Claude Code can call `index_codebase` on a 5,000-file Python repo and complete in <90s
 - [ ] `search_code` returns semantically relevant results — manual check: >7/10 relevant in top-5
 - [ ] **`get_context_for_prompt` returns token-budgeted, deduplicated context packages**
+- [ ] **`get_context_for_task` supports `implement_feature`, `debug_error`, `fix_test`, `review_diff`, `refactor`, `explain_code`, `write_tests`, and `security_review`**
+- [ ] **`get_context_for_diff` returns changed files, nearby symbols, related tests, affected configs/schemas, risk summary, and warnings**
+- [ ] **`get_context_for_error` returns referenced code, related context, and likely owner module for stack traces/compiler errors/test failures**
+- [ ] **`find_relevant_tests` returns likely unit, integration, and E2E tests plus fixtures/mocks and suggested commands when detectable**
+- [ ] **`get_project_overview` identifies language, framework, entry points, module layout, test/build commands, config files, and architecture areas**
+- [ ] **All 8 primary workflow MCP tools working: `index_codebase`, `search_code`, `get_context_for_prompt`, `get_context_for_task`, `get_context_for_diff`, `get_context_for_error`, `find_relevant_tests`, `get_project_overview`**
 - [ ] **Context assembly overhead <10ms (dedup + budget + format)**
 - [ ] **Related-file expansion includes imports and test files**
 - [ ] **Query cache returns cached results in <5ms**
 - [ ] Binary runs without any additional installation on macOS and Linux
 - [ ] Zero external API key required for basic operation (local ONNX mode works)
-- [ ] All 5 core MCP tools working: `index_codebase`, `search_code`, `get_context_for_prompt`, `get_index_status`, `clear_index`
+- [ ] `get_index_status` and `clear_index` work as maintenance/admin capabilities
 - [ ] Keyword search available within 5s of first tool call on new project (two-tier indexing)
 - [ ] Jina v2 Base Code model loads and embeds correctly via `ort` + `tokenizers` (v2.3)
 - [ ] Skills file discoverable by Claude Code without explicit MCP config
-- [ ] All tool responses include `index_status` and `index_coverage_pct` fields
+- [ ] Primary workflow responses include `index_status`, `index_coverage_pct`, `result_confidence`, `reason`, and `missing_context_warnings`
 - [ ] Content-addressed chunk IDs stable when function moves lines but content unchanged (v2.2)
 - [ ] Delete-then-insert produces zero orphaned chunks after file deletion (v2.2)
 - [ ] Synonym expansion improves recall: "auth" query finds "authentication" results (v2.2)
 - [ ] ONNX warm-up completes during server startup — first query responds in <150ms (v2.2)
 - [ ] Graceful shutdown flushes all pending writes (v2.2)
 - [ ] `vektor serve` logs which ONNX execution provider was selected (v2.2)
+
+### Phase 1 — Manual Workflow Validation Scenarios
+
+- [ ] Given a failing test output, `get_context_for_error` returns the failing test, referenced code, and likely owner module.
+- [ ] Given a git diff, `get_context_for_diff` returns changed files, related tests, and a risk summary.
+- [ ] Given changed auth files, `find_relevant_tests` returns direct auth tests and a plausible test command.
+- [ ] Given a new repo, `get_project_overview` identifies language, framework, entry points, and test/build commands.
 
 ### Phase 2 — Should Have
 
@@ -2091,7 +2514,7 @@ Goal: Extended language support, packaging, benchmarks, advanced retrieval.
 - [ ] Feedback keyed on (rel_path, symbol_name) survives re-indexing — no orphaned feedback (v2.2)
 - [ ] Embedding dimension mismatch detected on startup with clear user message (v2.2)
 - [ ] Cross-encoder re-ranking improves Precision@5 to >0.78 (v2.3 — moved from Phase 3)
-- [ ] `result_confidence` field accurately reflects result quality (v2.3)
+- [ ] `result_confidence` calibration improves with benchmarks and feedback signals (v2.3)
 - [ ] `scope` parameter correctly biases monorepo results to scoped package (v2.3)
 - [ ] Chunk-level expansion returns only relevant chunks from related files, not entire files (v2.3)
 - [ ] Language-specific token estimation error <15% across Python, Rust, Go, TypeScript (v2.3)
@@ -2101,6 +2524,7 @@ Goal: Extended language support, packaging, benchmarks, advanced retrieval.
 
 - [ ] Install script works: `curl -fsSL https://install.vektor.dev | sh`
 - [ ] Benchmark results published and honest comparison vs Zilliz MCP documented
+- [ ] Optional LSP-assisted precision improves definitions/references without becoming a hard runtime requirement
 - [ ] 100+ GitHub stars within 30 days of public launch
 
 ### Competitive Benchmark (v2.1, updated v2.3)
@@ -2113,7 +2537,7 @@ Goal: Extended language support, packaging, benchmarks, advanced retrieval.
 
 ---
 
-## 14. Implementation Rules
+## 15. Implementation Rules
 
 These rules exist so you learn Rust properly and the codebase stays clean.
 
@@ -2185,12 +2609,17 @@ vektor/
     │   ├── vector.rs      ← VectorStore (LanceDB embedded)
     │   ├── text.rs        ← TextIndex (Tantivy)
     │   └── state.rs       ← HashStore (SQLite)
-    ├── context/                ← THE DIFFERENTIATOR
+    ├── context/           ← THE DIFFERENTIATOR
     │   ├── mod.rs         ← ContextAssembler orchestrator
     │   ├── budget.rs      ← TokenCounter + budget allocation
     │   ├── dedup.rs       ← Deduplicator (merge overlapping chunks)
     │   ├── expander.rs    ← RelatedExpander (find related files)
     │   ├── cache.rs       ← QueryCache (LRU with TTL)
+    │   ├── task.rs        ← TaskContextPlanner for workflow wrappers (v2.5)
+    │   ├── diff.rs        ← DiffContextBuilder (v2.5)
+    │   ├── error.rs       ← ErrorContextBuilder (v2.5)
+    │   ├── tests.rs       ← TestFinder (v2.5)
+    │   ├── overview.rs    ← ProjectOverviewBuilder (v2.5)
     │   ├── recency.rs     ← RecencyTracker (mtime-based scoring, v2.1)
     │   ├── stitcher.rs    ← ContextStitcher (multi-language diversity, v2.1)
     │   ├── feedback.rs    ← FeedbackStore (quality feedback loop, v2.1)
@@ -2204,9 +2633,9 @@ vektor/
     ├── git.rs             ← GitHistoryIndexer (Phase 2)
     └── mcp/
         ├── mod.rs         ← MCP server bootstrap
-        └── handlers.rs    ← Tool handler functions (8 tools)
+        └── handlers.rs    ← Workflow + maintenance/admin tool handlers
 ```
 
 ---
 
-*Vektor — Not just search. Context.*
+*Vektor — Workflow-first context for AI coding agents.*
