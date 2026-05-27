@@ -1,1 +1,32 @@
+# Editor / agent state
 .claude
+.vscode
+.idea
+*.swp
+*.swo
+
+# OS noise
+.DS_Store
+Thumbs.db
+
+# Rust build artifacts
+/target
+**/*.rs.bk
+
+# Vektor runtime state (when running vektor inside the repo)
+/.vektor
+/vektor-data
+
+# Vector / fulltext / state store files (in case they leak outside ~/.vektor)
+*.lance
+*.lance-*
+*.onnx
+*.db
+*.db-journal
+*.db-wal
+*.db-shm
+
+# Model files (>100MB, never check in)
+*.bin
+*.safetensors
+tokenizer.json

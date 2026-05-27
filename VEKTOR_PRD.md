@@ -952,9 +952,17 @@ compared to general-purpose models like `bge-small-en-v1.5`.
 **Why Jina v2 Base Code:**
 - 137M parameters, 768 dimensions — good balance of quality vs speed
 - Trained specifically on code: understands function signatures, variable names, docstrings
-- **v2.3:** `OnnxEmbedder` is built directly against `ort` + `tokenizers` (primary approach).
-  `fastembed-rs` is optional — its Rust crate may not support Jina v2 at the required version.
-  ONNX model + tokenizer.json downloaded from HuggingFace on first run to `~/.vektor/models/`.
+- **Embedding-backend implementation (canonical):** `OnnxEmbedder` is built directly against
+  `ort` + `tokenizers` rather than `fastembed-rs`. This is a deliberate choice, not a workaround.
+  Going direct gives us explicit control of the four operations that determine retrieval quality:
+  (1) query/document prefix prepending (`search_query: ` / `search_document: ` for Jina v2),
+  (2) tokenization with the model-matched `tokenizer.json`,
+  (3) mean-pooling over token embeddings, and
+  (4) L2 normalization for cosine-via-dot-product.
+  `fastembed-rs` abstracts these into a single API call, which is convenient but blocks the
+  per-model tuning we need. `fastembed-rs` remains usable as an optional convenience layer
+  for users who don't need that control (see `Cargo.toml` in Section 11).
+  ONNX model + `tokenizer.json` are downloaded from HuggingFace on first run to `~/.vektor/models/`.
 - Apache 2.0 license — fully open source, no usage restrictions
 - 8K token context window — handles large functions without truncation
 
@@ -1731,10 +1739,10 @@ Vektor exposes MCP Resources for passive context subscription (see Section 7.5):
 
 | Component | Crate | Why |
 |---|---|---|
-| MCP Protocol | `rmcp` v0.16+ | Official Rust MCP SDK, stdio + SSE transport |
-| File Watching | `notify` v6 | OS-native events, cross-platform |
-| AST Chunking | `tree-sitter` + language grammars | Official Rust crate, 40+ languages |
-| ONNX Inference | `ort` v2 + `tokenizers` | ONNX Runtime (primary) + HuggingFace tokenizer for model input (v2.3: `ort` is primary, `fastembed` optional) |
+| MCP Protocol | `rmcp` v1.7+ | Official Rust MCP SDK, stdio + SSE transport. Crossed 1.0 — stable API surface. |
+| File Watching | `notify` v8 | OS-native events, cross-platform. v8 uses builder API (changed from v6). |
+| AST Chunking | `tree-sitter` v0.26 + language grammars | Official Rust crate, 40+ languages |
+| ONNX Inference | `ort` v2.0.0-rc.12 + `tokenizers` | ONNX Runtime (primary). RC pinned exactly; revisit at GA. HuggingFace tokenizer for model input. |
 | Tokenization | `tokenizers` | HuggingFace tokenizer for ONNX models |
 | Vector Database | `lancedb` (embedded) | True in-process embedded, Arrow-based, no server |
 | Full-Text Search | `tantivy` | Pure Rust BM25, Lucene equivalent |
@@ -1758,54 +1766,58 @@ Vektor exposes MCP Resources for passive context subscription (see Section 7.5):
 
 ### Cargo.toml (skeleton)
 
+> **Versions resolved against crates.io on 2026-05-27** via `cargo new && cargo add`.
+> Run `cargo update --workspace` periodically and re-verify before each minor release.
+
 ```toml
 [package]
 name = "vektor"
 version = "0.1.0"
-edition = "2021"
+edition = "2024"
 description = "Local-first coding context engine MCP server"
 license = "MIT"
+rust-version = "1.88"  # required by ort 2.0.0-rc.12
 
 [dependencies]
 # MCP Protocol
-rmcp = { version = "0.16", features = ["server", "transport-io"] }
-tokio = { version = "1", features = ["full"] }
+rmcp = { version = "1.7", features = ["server", "transport-io"] }
+tokio = { version = "1.52", features = ["full"] }
 
 # File system
-notify = "6"
+notify = "8.2"
 ignore = "0.4"
-walkdir = "2"
+walkdir = "2.5"
 
 # AST Parsing
-tree-sitter = "0.24"
-tree-sitter-python = "0.23"
+tree-sitter = "0.26"
+tree-sitter-python = "0.25"
 tree-sitter-typescript = "0.23"
-tree-sitter-javascript = "0.23"
-tree-sitter-rust = "0.23"
-tree-sitter-go = "0.23"
+tree-sitter-javascript = "0.25"
+tree-sitter-rust = "0.24"
+tree-sitter-go = "0.25"
 
-# Embedding (v2.3: ort is primary, fastembed optional)
-ort = "2"                          # ONNX Runtime — primary embedding backend (static CPU link by default)
-tokenizers = "0.20"                # HuggingFace tokenizer for ONNX model input construction
-tiktoken-rs = "0.5"                # Precise token counting for two-pass budget verification (v2.3)
-reqwest = { version = "0.12", features = ["json"] }
-# fastembed = "4"                  # Optional convenience layer — uncomment if fastembed-rs supports Jina v2
+# Embedding — ort is primary, tokenizers for input prep
+ort = "=2.0.0-rc.12"               # Pinned exactly; ort 2.x is RC but actively maintained (wraps ONNX Runtime 1.24). Revisit at GA.
+tokenizers = "0.23"                # HuggingFace tokenizer for ONNX model input construction
+tiktoken-rs = "0.11"               # Precise token counting for two-pass budget verification (v2.3)
+reqwest = { version = "0.13", features = ["json"] }
+# fastembed = "5"                  # Optional convenience layer — uncomment if you prefer fastembed-rs's bundled models
 
 # Vector Storage (LanceDB embedded)
 # NOTE: Do NOT independently pin arrow versions. Let lancedb dictate the arrow version
 # via its transitive dependency to avoid type-mismatch compilation failures. (v2.3 fix)
-lancedb = "0.23"
+lancedb = "0.29"
 # arrow, arrow-array, arrow-schema versions are inherited from lancedb
 
 # Full-Text Search
-tantivy = "0.22"
+tantivy = "0.26"
 
 # State Storage
-rusqlite = { version = "0.31", features = ["bundled"] }
+rusqlite = { version = "0.40", features = ["bundled"] }
 
 # Utilities
-rayon = "1"
-sha2 = "0.10"
+rayon = "1.12"
+sha2 = "0.11"
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 anyhow = "1"
@@ -1813,17 +1825,17 @@ thiserror = "2"
 async-trait = "0.1"
 tracing = "0.1"
 tracing-subscriber = { version = "0.3", features = ["env-filter"] }
-clap = { version = "4", features = ["derive"] }
-config = "0.14"
-toml = "0.8"
-dirs = "5"
-indicatif = "0.17"
+clap = { version = "4.6", features = ["derive"] }
+config = "0.15"
+toml = "1"
+dirs = "6"
+indicatif = "0.18"
 uuid = { version = "1", features = ["v4"] }
-lru = "0.12"
-sysinfo = "0.32"
+lru = "0.18"
+sysinfo = "0.38"
 
 # Phase 2 (uncomment when needed)
-# git2 = "0.19"
+# git2 = "0.21"
 # regex = "1"
 ```
 
@@ -1957,8 +1969,8 @@ pub trait Embedder: Send + Sync {
   helper methods that auto-prepend the correct prefix
 - What you learn: Rust traits, `async_trait` macro, `Send + Sync` bounds, default trait methods
 
-**Function 3.2: `OnnxEmbedder::new(model_name: &str) -> Result<Self>`** (v2.3: `ort`-direct approach)
-- Load ONNX model via `ort` crate directly (NOT `fastembed`, which may lack Jina v2 support)
+**Function 3.2: `OnnxEmbedder::new(model_name: &str) -> Result<Self>`** (`ort`-direct approach — see Section 6.1 for rationale)
+- Load ONNX model via `ort` crate directly. We use `ort` + `tokenizers` (not the `fastembed-rs` wrapper) so we own prefix prepending, tokenization, pooling, and L2 normalization — these are quality levers, not implementation details.
 - Download ONNX model from HuggingFace on first run (stored in `~/.vektor/models/`)
 - Load matching `tokenizer.json` for the model (via `tokenizers` crate)
 - Configure ONNX session: `GraphOptimizationLevel::Level3`, static CPU provider by default
@@ -2440,7 +2452,7 @@ Goal: Extended language support, packaging, benchmarks, advanced retrieval.
 
 | Risk | Severity | Mitigation |
 |---|---|---|
-| `rmcp` Rust SDK API churn (v0.16, pre-1.0) | Medium | Pin version in Cargo.toml. `rmcp` is official MCP SDK, actively maintained. Fallback: implement stdio JSON-RPC manually (~200 lines) |
+| `rmcp` Rust SDK API churn | Low | **Resolved 2026-05-27:** `rmcp` is at v1.7 (post-1.0, stable API). Pin to `1.7.x` and follow semver. Fallback: implement stdio JSON-RPC manually (~200 lines) if 2.0 breaks compatibility. |
 | ONNX model download on first run (~130–400MB) | Low | Progress bar via `indicatif`. Bundle smallest model (bge-small, 130MB). |
 | LanceDB at scale (500K+ chunks) | Low | LanceDB handles millions of rows. Monitor memory; partition by project already isolates data. |
 | OpenAI API rate limits during large initial index | Low | Configurable batch size, exponential backoff, automatic ONNX fallback |
@@ -2454,7 +2466,7 @@ Goal: Extended language support, packaging, benchmarks, advanced retrieval.
 | Skills standard evolving (agentskills.io) | Low | SKILL.md is simple markdown — easy to update format. Minimal maintenance burden. |
 | Two-tier indexing adds complexity to tool handlers | Medium | Clear `IndexPhase` enum. All handlers check status via `IndexStatusTracker` before choosing search mode. Well-tested state machine. |
 | Cross-store inconsistency after crash (LanceDB written, Tantivy not) | Medium | Delete-then-insert with HashStore as source of truth. `delete_by_file` before re-insert during recovery. Separate SQLite files per concern. (v2.2) |
-| fastembed-rs may not support Jina v2 Base Code at pinned version | Medium | **v2.3 fix:** `ort` + `tokenizers` is now the primary approach; `fastembed` is optional. Build `OnnxEmbedder` directly against `ort` for Jina v2 with manual tokenization, pooling, and normalization. (v2.3) |
+| `ort 2.x` still at release candidate (`2.0.0-rc.12`) | Medium | Pin exactly via `ort = "=2.0.0-rc.12"`. Crate is actively maintained, wraps current ONNX Runtime 1.24, and is the de-facto standard for Rust ONNX. Revisit pin at 2.0 GA. Build `OnnxEmbedder` directly against `ort` + `tokenizers` (not `fastembed-rs`) to keep direct control over the model API. |
 | Embedding dimension mismatch when switching models | Medium | Store (model_name, dim) in project metadata. Detect mismatch → force clean re-index with user warning. (v2.2) |
 | Arrow version coupling across lancedb and independent pins | High | **v2.3 fix:** Do not independently pin arrow versions. Let `lancedb` dictate via transitive dependency. Use `cargo tree -d` to detect duplicate arrow versions. (v2.3) |
 | SQLite `power()` function unavailable in standard builds | High | **v2.3 fix:** Compute feedback decay in Rust, not SQL. Fetch raw records, apply `0.5_f64.powf()` in code. Avoids `-DSQLITE_ENABLE_MATH_FUNCTIONS` build flag dependency. (v2.3) |
@@ -2468,7 +2480,7 @@ Goal: Extended language support, packaging, benchmarks, advanced retrieval.
 
 ### Phase 1 — Must Have (before Phase 2 starts)
 
-- [ ] Claude Code can call `index_codebase` on a 5,000-file Python repo and complete in <90s
+- [ ] Claude Code can call `index_codebase` on a 5,000-file Python repo and complete within the Section 10 targets: **<300s** with default backend (Jina v2 768d, CPU) and **<90s** with `--lite` (bge-small 384d, CPU). GPU/CoreML acceleration should bring the default-backend run under ~60s.
 - [ ] `search_code` returns semantically relevant results — manual check: >7/10 relevant in top-5
 - [ ] **`get_context_for_prompt` returns token-budgeted, deduplicated context packages**
 - [ ] **`get_context_for_task` supports `implement_feature`, `debug_error`, `fix_test`, `review_diff`, `refactor`, `explain_code`, `write_tests`, and `security_review`**
