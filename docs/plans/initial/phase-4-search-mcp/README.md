@@ -1,0 +1,62 @@
+# Phase 4 — Search + MCP (interim — no release tag)
+
+> **Goal**: Tantivy BM25 indexing + RRF hybrid fusion with adaptive weights + real MCP tool handlers. `search_code` now returns ranked results. `get_context_for_prompt` returns a basic context package (full assembly pipeline lives in Phase 5).
+
+**Roadmap mapping**: Stage 2 — bridges `v0.3.0` (storage) to `v0.4.0` (full context assembly). **No release tag from this phase alone**; releases happen at the v0.4.0 boundary after Phase 5 lands.
+**PRD mapping**: Section 4.2 (Hybrid Search + RRF), Section 4.6 (Two-Tier), Section 12 Week 4 Functions 4.1–4.8, Functions CA.10 + CA.11 (synonym, adaptive weights)
+**Effort estimate**: 2–3 weeks of focused part-time work
+**Status**: ⬜ Not started — per-task files NOT yet written (task 3.12 expands them)
+
+---
+
+## Task list
+
+| ID | Task | Effort | Depends on | Status |
+|---|---|---|---|---|
+| 4.1 | `TextIndex::new(project_dir)` — Tantivy schema per PRD §4.10 (chunk_id / rel_path / content / symbol_name 2.0× boost / language / start_line / end_line / index_depth) | M | 3.12 | ⬜ |
+| 4.2 | `TextIndex::add_chunks(chunks)` — batch insert + commit | S | 4.1 | ⬜ |
+| 4.3 | `TextIndex::search(query, top_k)` — BM25 with en_stem tokenizer | M | 4.2 | ⬜ |
+| 4.4 | `rrf_fuse(semantic, keyword, k)` + `AdaptiveWeights::compute` + `SynonymExpander` (~50 entries) | M | 3.12 | ⬜ |
+| 4.5 | `search_hybrid(query, config)` — tokio::join! of vector + text search → RRF fusion | M | 3.8, 4.3, 4.4 | ⬜ |
+| 4.6 | `index_codebase(path, config, force)` orchestrator — discover → hash → chunk → embed → store + Tantivy | L | 3.7, 4.2 | ⬜ |
+| 4.7 | MCP server: replace no-op handlers from task 1.6 with real `search_code` + `index_codebase` dispatch | M | 1.6, 4.6 | ⬜ |
+| 4.8 | Basic `get_context_for_prompt` handler — search → top-k results → return without dedup/budget (full assembly is Phase 5) | M | 4.5, 4.7 | ⬜ |
+
+---
+
+## Phase exit criteria
+
+All must be true before moving to Phase 5:
+
+- [ ] All 8 tasks above marked ✅ Done
+- [ ] `vektor index <repo>` builds both LanceDB AND Tantivy indices in one pass
+- [ ] `vektor serve` + MCP `search_code` call returns real ranked results (not no-op JSON)
+- [ ] Hybrid mode produces different rankings than semantic-only or keyword-only on a known query (verifiable test)
+- [ ] Adaptive weights kick in: identifier-heavy queries (`validate_token AuthMiddleware`) favor BM25; natural-language queries (`how does authentication work`) favor semantic
+- [ ] Synonym expansion: querying `"auth"` finds chunks containing `"authentication"` via BM25 expansion
+- [ ] `get_context_for_prompt` returns a structured `ContextPackage` JSON matching PRD §5.3 (even if budget allocation is naive at this stage)
+- [ ] No regression on Phase 2/3 tests
+- [ ] Search latency <300ms P95 on a 10K-chunk index (no IVF_PQ yet — brute force is fine at this scale)
+
+**No release tag from this phase.** The next release tag is `v0.4.0` after Phase 5 completes.
+
+---
+
+## Notes
+
+- **rmcp 1.7 handler signatures**: task 1.6 already wired the no-op handlers. This phase just replaces the no-op bodies with calls into `search_hybrid` and `assemble_context`. The MCP wiring (tool registration, schema, etc.) doesn't change.
+- **Tantivy commit semantics**: writes are batched. `add_chunks` doesn't commit immediately; commit only after the orchestrator processes all files (per PRD §4.3 "batch Tantivy commit (once per debounce window, not per file)"). At Phase 4, debounce isn't a thing yet, so commit at end of `index_codebase`.
+- **RRF k constant**: 60 (PRD §4.2 standard).
+- **Synonym map size**: ~50 entries per PRD §4.2 "Static synonym expansion." Don't pad it — small, curated, focused on code concepts.
+- **Field boost on `symbol_name`**: 2.0x per PRD §4.10. Tantivy supports this via `BoostQuery` or schema-level field weights.
+- **Stale `index_depth` field**: the Tantivy schema includes `index_depth` for shallow-vs-deep distinction. At Phase 4 we only have deep, so always write `"deep"`. ShallowIndexer arrives in Phase 5.
+- **`get_context_for_prompt` is intentionally naive at Phase 4**: it returns search results without dedup, expansion, or budget allocation. Those are Phase 5 deliverables. The handler exists so that the MCP tool isn't a no-op, but the *quality* improvements land in Phase 5.
+
+---
+
+## When this phase completes
+
+1. Mark all tasks ✅
+2. (No tag — release happens after Phase 5)
+3. Update Current State tables
+4. Expand `phase-5-context-assembly/` from task list to per-task files (task 4.8 closes this)
