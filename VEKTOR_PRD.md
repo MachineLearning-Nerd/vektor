@@ -1161,6 +1161,33 @@ Send `notifications/resources/updated` when index completes so subscribed agents
 claude mcp add --transport stdio vektor -- vektor serve
 ```
 
+### 7.7 `vektor init` — MCP Server Registration
+
+Skills (Section 7.2) teach an agent *when* to call Vektor. They do **not** install the MCP
+server into the agent's config file — that step is still required. Without it, "zero-config
+adoption" is a half-truth: the agent sees the Skill but cannot invoke any tool because
+the MCP server is not registered.
+
+`vektor init` closes this gap. Run once after install:
+
+```bash
+$ vektor init
+✓ Detected Claude Code (~/.claude.json) — added vektor MCP server entry
+✓ Detected Cursor (~/.cursor/mcp.json) — added vektor MCP server entry
+✓ Detected Codex CLI (~/.codex/config.toml) — added vektor MCP server entry
+✓ Skills file installed at ~/.claude/skills/vektor/SKILL.md
+Done. Restart your agent to pick up the new MCP server.
+```
+
+Behavior:
+- Detects installed agents by config-file presence at well-known paths.
+- For each detected agent, writes the appropriate MCP server entry (transport, command, env).
+- If a Vektor entry already exists: refuses with a clear message; `--force` overwrites.
+- Optional `--agent <name>` flag for single-agent install.
+- Optional `--dry-run` flag prints the changes without writing.
+
+Ships in Roadmap Stage 2 / `v0.4.0` (see VEKTOR_ROADMAP.md "Brought forward from external review" deliverables).
+
 ---
 
 ## 8. Coding Workflow Tools

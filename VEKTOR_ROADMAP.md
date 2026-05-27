@@ -57,7 +57,7 @@ Each arrow is a hard gate — the next stage does not begin until the previous s
 
 ---
 
-## Current State (2026-05-27, updated)
+## Current State (2026-05-27, updated again)
 
 | Item | Status |
 |---|---|
@@ -66,9 +66,12 @@ Each arrow is a hard gate — the next stage does not begin until the previous s
 | A2 — Reconcile embedding-backend description | ✅ Done (commit `025e522`) |
 | A3 — Fix Sec 14 vs Sec 10 metric conflict | ✅ Done (commit `025e522`) |
 | A4 — Expand `.gitignore` | ✅ Done (commit `025e522`) |
-| External review addressed (phase rename, scope reconcile, real-time soften, G3 fix, current-state refresh) | ✅ Done (this commit) |
+| External review addressed (R1–R6: phase rename, scope reconcile, real-time soften, G3 fix, current-state refresh, crate-name note) | ✅ Done (commit `78ddf9a`) |
+| Re-sequencing (B1.2/B1.5 → Stage 2, C8.1/C8.2 → Stage 2, `vektor init` added, lightweight benchmark gate at v0.4) | ✅ Done (this commit) |
+| `README.md` exists | ✅ Done (this commit) |
+| `LICENSE` exists | ✅ Done (this commit) |
 | Crate name decision (`vektor` taken on crates.io) | ⏸ Deferred until `cargo publish` |
-| Cargo.toml exists in repo | ⬜ Not started (first Stage 2 deliverable) |
+| `Cargo.toml` exists in repo | ⬜ Not started (first Stage 2 deliverable) |
 | Any Rust code written | ⬜ Not started |
 
 ---
@@ -111,27 +114,27 @@ Bring the PRD into a state where every implementation conversation downstream pr
 
 ---
 
-## Stage 2 — Phase 1 + B6: Core Engine + Bundled Model (v0.1 → v0.4)
+## Stage 2 — Core Engine + Bundled Model + Launch Prerequisites (v0.1 → v0.4)
 
 **Release tag**: `v0.1.0` → `v0.4.x`
-**PRD reference**: Sections 4, 6, 11, 12 (Weeks 1–6 of Phase 1) + B6 from review
+**PRD reference**: Sections 4, 6, 11, 12 (Weeks 1–6 of PRD Phase 1) + B6 from review + brought-forward items (B1, `vektor init`, C8.1, C8.2, lightweight benchmark, README/LICENSE)
 **Depends on**: Stage 1 complete
-**Effort**: Large (timeline lifted; estimate 12–16 weeks part-time for a Rust learner)
+**Effort**: Large (timeline lifted; estimate 14–18 weeks part-time for a Rust learner — slightly larger than v2.5 estimate to absorb the brought-forward items)
 **Status**: Not started
 
 ### Goal
-A working MCP server that can index a real codebase, perform hybrid BM25 + semantic search, and assemble token-budgeted context — with a bundled ONNX model so first-run works offline.
+A working MCP server that can index a real codebase, perform hybrid BM25 + semantic search, and assemble token-budgeted context — **with the security, distribution, and launch prerequisites a stranger needs to actually use the binary on day one.** No more "alpha that only the author can run."
 
-### Deliverables — Core Engine (Phase 1)
+### Deliverables — Core Engine (PRD Phase 1)
 
 Follows PRD Section 12 weekly breakdown. Cargo releases tag at natural completion points:
 
-| Sub-stage | Release | What ships | PRD ref |
-|---|---|---|---|
-| Skeleton | `v0.1.0` | `cargo build` succeeds, CLI parses `vektor index` and `vektor serve`, no-op handlers respond to MCP | Week 1, Function 1.1–1.4 |
-| AST chunker | `v0.2.0` | Tree-sitter chunking for 5 languages + sliding-window fallback. Output verified via `vektor index --dump-chunks` | Week 2, Function 2.1–2.5 |
-| Embed + vector store | `v0.3.0` | OnnxEmbedder loads Jina v2, embeds chunks, stores in LanceDB. `vektor index` produces a queryable LanceDB table | Week 3, Function 3.1–3.9 |
-| BM25 + hybrid search + MCP | `v0.4.0` | Tantivy BM25 + RRF fusion + MCP server bootstrap + 3 primary tool handlers (`index_codebase`, `search_code`, `get_context_for_prompt`) | Week 4–6, Function 4.1–4.8 + CA.1–CA.6 |
+| Sub-stage | Release | What ships (core engine) | What ships (launch prereqs — see brought-forward table) | PRD ref |
+|---|---|---|---|---|
+| Skeleton | `v0.1.0` | `cargo build` succeeds, CLI parses `vektor index` and `vektor serve`, no-op handlers respond to MCP | README.md, LICENSE, basic GitHub Actions CI (build+test on macOS+Linux) | Week 1, Function 1.1–1.4 |
+| AST chunker | `v0.2.0` | Tree-sitter chunking for 5 languages + sliding-window fallback. Output verified via `vektor index --dump-chunks` | — | Week 2, Function 2.1–2.5 |
+| Embed + vector store | `v0.3.0` | OnnxEmbedder loads Jina v2, embeds chunks, stores in LanceDB. `vektor index` produces a queryable LanceDB table | `SecretDetector` skips secrets during indexing (B1.2) | Week 3, Function 3.1–3.9 |
+| BM25 + hybrid search + MCP | `v0.4.0` | Tantivy BM25 + RRF fusion + MCP server bootstrap + 3 primary tool handlers (`index_codebase`, `search_code`, `get_context_for_prompt`) | `vektor init` MCP config writer, release artifacts (binaries + checksums) for macOS+Linux, lightweight benchmark gate (≥20 queries against tokio) → BENCHMARKS.md v0.1 | Week 4–6, Function 4.1–4.8 + CA.1–CA.6 |
 
 ### Deliverables — B6: Bundled Model Offline Path
 
@@ -145,8 +148,26 @@ Runs in parallel with the engine work (no dependency on engine internals):
 | B6.4 | Release tarball strategy | GitHub Release assets include `vektor-<platform>-with-jina-v2.tar.gz` (binary + model, ~330MB) and `vektor-<platform>.tar.gz` (binary only, ~30MB). `cargo install vektor` users get the binary and run `vektor models download` on first launch. |
 | B6.5 | Mirror fallback for HF | If HuggingFace download returns 429/timeout, fall back to a list of mirrors (CDN, ModelScope, etc.). Config in `~/.vektor/config.toml`. |
 
+### Deliverables — Brought forward from external review (2026-05-27)
+
+The reviewer correctly argued that secret handling, MCP server registration, prebuilt binaries, benchmark proof, and README/LICENSE are *launch prerequisites*, not v1.0 nice-to-haves. They join Stage 2:
+
+| # | Item | Ships in | What it produces |
+|---|---|---|---|
+| **B1.2** | `SecretDetector` module (moved from Stage 4) | `v0.3.0` | Static gitleaks-style rules + Shannon-entropy check. Chunks containing matches are skipped before embedding, logged as warnings, and surfaced in `index_codebase` response metadata. Inexpensive (~50 regexes, ~5ms per file). The full PRD Section 4.11 doc + audit subcommand (B1.1/B1.3/B1.4) still ship at Stage 4 — this is the *behavior*, not the *governance*. |
+| **B1.5** | `.env*`, `*.pem`, `*.key`, `credentials.json` file-level skip list | `v0.3.0` | Hardcoded skip list in the file discovery path. Doesn't even read these files into memory. |
+| **L1** | `vektor init` MCP config writer | `v0.4.0` | Subcommand that detects installed agents (Claude Code via `~/.claude.json`, Cursor via `~/.cursor/mcp.json`, Codex via `~/.codex/config.toml`) and writes the appropriate MCP server entry. Reviewer's point: "Skills teach agents *when* to call Vektor; they don't register the server." Without `vektor init`, "zero-config" is a half-truth. |
+| **L2** | README.md | `v0.1.0` | Project pitch, current state, install path (cargo + prebuilt), quickstart (3 commands max), links to PRD/ROADMAP, license. Written before any non-skeleton code so the project has a public face from day one. |
+| **L3** | LICENSE (MIT) | `v0.1.0` | The license already declared in PRD Section 1 + `Cargo.toml`. Shipping the actual file matters for `cargo publish` and for OSS-tooling correctness. |
+| **C8.1** | GitHub Actions CI matrix (moved from Stage 6) | `v0.1.0` (lite) → `v0.4.0` (full) | At `v0.1.0`: build + test on macOS-aarch64 and linux-x86_64. At `v0.4.0`: full matrix adds macOS-x86_64, linux-aarch64, windows-x86_64. Reviewer's point: "most target users need prebuilt binaries; defaulting to Cargo + 300MB model + Rust 1.88 toolchain is friction." |
+| **C8.2** | Release artifacts pipeline (moved from Stage 6) | `v0.4.0` | GitHub Release on tag push: signed binaries + SHA-256 checksums for each platform in the matrix, plus the `--with-jina-v2` tarballs from B6.4. Homebrew tap, AUR, deb/rpm stay at Stage 6 (`C8.3`). |
+| **BM1** | Lightweight benchmark gate at `v0.4.0` | `v0.4.0` | A 20-query labeled subset of the eventual C1 corpus, run against tokio's source code. Outputs to `BENCHMARKS.md`. Establishes the baseline that subsequent releases must not regress. Reviewer's point: "claims need proof; BENCHMARKS.md needs to be part of launch, not later." |
+
+The full versions of items B1, C8, and C1 still live in their original stages (Stage 4 for B1.1/B1.3/B1.4 doc + audit; Stage 6 for C8.3+ packaging; Stage 3 for full C1 corpus). Stage 2 just pulls forward the *minimum viable subset* that the reviewer correctly argued must exist on day one.
+
 ### Exit criteria (must all be true to ship v0.4)
 
+**Core engine:**
 - [ ] `vektor index /some/repo` completes without errors on at least 3 real repos (FastAPI source, tokio, a small TypeScript project)
 - [ ] `vektor serve` registers `index_codebase`, `search_code`, `get_context_for_prompt` with Claude Code via MCP and they all return correct JSON
 - [ ] `cargo install vektor && vektor models download` works end-to-end on a fresh macOS install
@@ -154,11 +175,21 @@ Runs in parallel with the engine work (no dependency on engine internals):
 - [ ] No `unwrap()` calls outside `#[cfg(test)]` blocks (per PRD Section 15 Implementation Rules)
 - [ ] All Section 14 "Phase 1 Must Have" criteria pass for the 3 tools shipped (the other 5 workflow tools are explicitly deferred to Stage 3)
 
+**Launch prereqs (brought forward from review):**
+- [ ] `vektor init` writes correct MCP config for at least Claude Code and Cursor on macOS+Linux
+- [ ] Secret-aware indexing: planting `AWS_ACCESS_KEY_ID=AKIA...` and a fake `id_rsa` block in a test repo and indexing it — both must be skipped, with a warning logged
+- [ ] CI matrix: `cargo build --release && cargo test` green on macOS-aarch64 + linux-x86_64 on every PR; `v0.4.0` tag produces downloadable signed binaries for both
+- [ ] `BENCHMARKS.md` exists with `v0.4.0 baseline` numbers from at least 20 labeled queries against tokio
+- [ ] `README.md` walks a fresh user from `curl install` (or `cargo install`) → `vektor init` → first MCP call in under 5 commands
+- [ ] `LICENSE` file present, matches the MIT license declared in PRD Section 1
+
 ### Open decisions
 
 - **D2.1** — Should `cargo install vektor` auto-trigger `vektor models download` on first MCP server start? Reduces friction; adds 5-minute first-run latency. *Recommendation: prompt-then-download with `--auto-download` to skip the prompt.*
 - **D2.2** — Bundle model in the cargo crate itself (makes `cargo install` download 330MB) or strictly via GitHub releases (cargo users always need a second step)? *Recommendation: GitHub releases only; cargo crate stays lean.*
 - **D2.3** — Which 3 reference repos for the exit criteria? *Recommendation: FastAPI (Python, ~700 files), tokio (Rust, ~400 files), a small TypeScript repo TBD.*
+- **D2.4** — Which secret-detection rule set for B1.2? *Recommendation: a curated subset (~50 rules) from [gitleaks](https://github.com/gitleaks/gitleaks)' default config, vendored as a static `secret_rules.toml`. Updating the rule set ships with each Vektor release; users don't need to fetch rules separately.*
+- **D2.5** — `vektor init` strategy when a user already has an MCP config for Vektor: refuse, prompt to overwrite, or merge? *Recommendation: refuse with a clear message + `--force` flag to overwrite.*
 
 ---
 
@@ -225,14 +256,17 @@ Each one is its own sub-product. Cargo releases tag at natural completion:
 ### Goal
 Make Vektor responsible enough for stranger-installs-it daily use. This is the gate between "alpha" and "production-grade."
 
-### Deliverables — B1: Secret-Aware Indexing
+### Deliverables — B1: Secret-Aware Indexing (governance + audit; behavior already shipped at v0.3)
+
+> **Note (2026-05-27):** The *behavior* (B1.2 + B1.5) was pulled forward into Stage 2 (`v0.3.0`) per external review — Vektor refuses to embed obvious secrets from day one. What stays here is the *governance and audit surface*: the formal PRD doc, the report flag, and the retroactive audit subcommand.
 
 | # | Item | What it produces |
 |---|---|---|
-| B1.1 | New PRD Section 4.11 "Secret-aware indexing" | Specifies what Vektor refuses to embed: detected secrets, high-entropy strings >40 chars, `.env*`, `*.pem`, `*.key`, `credentials.json` patterns. |
-| B1.2 | `SecretDetector` module | Uses a static rules list (gitleaks-style regexes) + Shannon entropy check. Skips chunks containing matches, logs warning. |
-| B1.3 | `vektor index --report-secrets` flag | Dry-run mode that lists what *would* be skipped. Helps users audit their repo. |
-| B1.4 | Existing-index secret audit | `vektor audit-secrets` scans an existing index for chunks that retroactively match secret patterns. Removes them. |
+| B1.1 | New PRD Section 4.11 "Secret-aware indexing" | Formal specification of what Vektor refuses to embed and the detection rules. The implementation already exists since `v0.3.0`; B1.1 documents the contract. |
+| ~~B1.2~~ | ~~`SecretDetector` module~~ | **Moved to Stage 2 / `v0.3.0`** — see Stage 2 brought-forward table. |
+| B1.3 | `vektor index --report-secrets` flag | Dry-run mode that lists what *would* be skipped. Helps users audit their repo before committing to an index. |
+| B1.4 | Existing-index secret audit | `vektor audit-secrets` scans an existing index for chunks that retroactively match secret patterns (e.g., rule set updated). Removes them, logs what was removed. |
+| ~~B1.5~~ | ~~File-level skip list~~ | **Moved to Stage 2 / `v0.3.0`** — `.env*`, `*.pem`, `*.key`, `credentials.json` skipped during file discovery. |
 
 ### Deliverables — B2: Threat Model + Privacy Guarantees
 
@@ -356,15 +390,18 @@ Turn Vektor from a tool into a platform. Each item below is a deliverable indepe
 | C7.2 | Document back-compat policy: additive changes are minor, renames/removals are major | S |
 | C7.3 | Schema-version mismatch warning emitted to agents on stale clients | S |
 
-### Deliverables — C8: CI/CD Matrix
+### Deliverables — C8: CI/CD Matrix (packaging surfaces; core CI already shipped at v0.4)
+
+> **Note (2026-05-27):** Basic CI matrix (C8.1) and release artifacts (C8.2) were pulled forward into Stage 2 per external review — prebuilt binaries exist from `v0.1.0`, signed release artifacts from `v0.4.0`. What stays here is the *packaging-channel* expansion (Homebrew/AUR/deb/rpm) and the regression-gate hooks that depend on benchmark/calibration infrastructure built in earlier stages.
 
 | # | Item | Effort |
 |---|---|---|
-| C8.1 | GitHub Actions matrix: macOS-x86_64, macOS-aarch64, linux-x86_64, linux-aarch64, windows-x86_64 | M |
-| C8.2 | Release artifacts: signed binaries + checksums + SBOM | M |
+| ~~C8.1~~ | ~~GitHub Actions build matrix~~ | **Moved to Stage 2 / `v0.1.0` (lite) → `v0.4.0` (full)** |
+| ~~C8.2~~ | ~~Release artifacts: signed binaries + checksums~~ | **Moved to Stage 2 / `v0.4.0`**. SBOM stays here (advanced supply-chain signal — see C8.6 below). |
 | C8.3 | Homebrew tap (`brew install vektor/tap/vektor`), AUR package, deb/rpm | L |
 | C8.4 | Per-PR benchmark regression check against C1 corpus | M |
 | C8.5 | Per-release calibration check (C2 calibration must not degrade) | S |
+| C8.6 | SBOM generation (CycloneDX) + Sigstore signing | M |
 
 ### Deliverables — C9: Plugin Model
 
