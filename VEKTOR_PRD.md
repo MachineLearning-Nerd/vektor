@@ -47,8 +47,9 @@
 Vektor is a high-performance, local-first **codebase context engine** exposed as a Model Context
 Protocol (MCP) server. Built entirely in Rust, it gives Claude Code, Codex CLI, Cursor, and any
 MCP-compatible AI coding assistant task-specific context for real coding work —
-without sending code to the cloud, without requiring external API keys for core operation,
-and with real-time sub-500ms re-indexing triggered by OS file-save events.
+without sending code to the cloud and without requiring external API keys for core operation.
+Real-time sub-500ms re-indexing on OS file-save events is **planned for `v1.0` (Roadmap Stage 4)**;
+pre-`v1.0` releases use on-demand re-indexing via the `index_codebase` tool.
 
 **The one-line pitch:**
 > *"A local coding context engine that gives AI agents the right files, tests, symbols, and risks for the task at hand."*
@@ -221,7 +222,7 @@ The pain is not abstract retrieval. It shows up in concrete coding jobs:
 |---|---|---|---|
 | G1 | Real-time file watching — re-index changed files in <500ms on save | Critical | 2 |
 | G2 | Hybrid BM25 + dense vector search with RRF fusion | Critical | 1 |
-| G3 | AST-aware chunking (tree-sitter) for 20+ languages | Critical | 1 |
+| G3 | AST-aware chunking (tree-sitter) for **5 core languages** (Python, TypeScript, JavaScript, Rust, Go) — extensible to 20+ in Phase 3 / Roadmap Stage 6 | Critical | 1 |
 | G4 | Pluggable embedding: local ONNX, OpenAI-compatible API, Ollama | Critical | 1 |
 | G5 | Local vector database (LanceDB embedded) — zero cloud required | Critical | 1 |
 | G6 | Incremental indexing via SHA-256 file hash diffing | High | 1 |
@@ -1170,7 +1171,15 @@ the product story by themselves.
 
 ### 8.1 Primary Phase 1 Tool Contract
 
-Vektor first ships 8 primary workflow MCP tools:
+> **Staging note (see VEKTOR_ROADMAP.md):** Phase 1 splits across two roadmap stages.
+> Roadmap Stage 2 (`v0.1.0` → `v0.4.x`) ships **3 primary tools**: `index_codebase`,
+> `search_code`, `get_context_for_prompt`. Roadmap Stage 3 (`v0.5.0` → `v0.9.x`) adds the
+> **5 workflow tools** (`get_context_for_task`, `get_context_for_diff`, `get_context_for_error`,
+> `find_relevant_tests`, `get_project_overview`). The PRD describes all 8 because they are
+> all engineered against the same context-assembly engine. They ship in two release waves,
+> not one.
+
+Vektor's full Phase 1 surface is 8 primary workflow MCP tools, delivered across two release stages:
 
 | Tool | Purpose |
 |---|---|
@@ -2488,7 +2497,9 @@ Goal: Extended language support, packaging, benchmarks, advanced retrieval.
 - [ ] **`get_context_for_error` returns referenced code, related context, and likely owner module for stack traces/compiler errors/test failures**
 - [ ] **`find_relevant_tests` returns likely unit, integration, and E2E tests plus fixtures/mocks and suggested commands when detectable**
 - [ ] **`get_project_overview` identifies language, framework, entry points, module layout, test/build commands, config files, and architecture areas**
-- [ ] **All 8 primary workflow MCP tools working: `index_codebase`, `search_code`, `get_context_for_prompt`, `get_context_for_task`, `get_context_for_diff`, `get_context_for_error`, `find_relevant_tests`, `get_project_overview`**
+- [ ] **Roadmap Stage 2 / `v0.4.x` ships 3 primary tools: `index_codebase`, `search_code`, `get_context_for_prompt`** (see VEKTOR_ROADMAP.md Stage 2)
+- [ ] **Roadmap Stage 3 / `v0.5.0` → `v0.9.x` adds 5 workflow tools: `get_context_for_task`, `get_context_for_diff`, `get_context_for_error`, `find_relevant_tests`, `get_project_overview`** (see VEKTOR_ROADMAP.md Stage 3)
+- [ ] **All 8 primary workflow MCP tools working by `v0.9.x` (the gate before Stage 4 / `v1.0` hardening)**
 - [ ] **Context assembly overhead <10ms (dedup + budget + format)**
 - [ ] **Related-file expansion includes imports and test files**
 - [ ] **Query cache returns cached results in <5ms**

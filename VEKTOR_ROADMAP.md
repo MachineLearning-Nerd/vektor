@@ -24,14 +24,18 @@
 **Phases** describe engineering scope. **Cargo release tags** are the user-visible artifact.
 This document uses both:
 
-| Engineering scope | Cargo release range | What it means |
+| Roadmap stage | Cargo release range | What it means |
 |---|---|---|
 | Stage 1 — PRD Hygiene | (no release) | Documentation only |
-| Phase 1 — Core engine | `v0.1.0` → `v0.4.x` | Index + search + 3 primary tools. Pre-alpha; expect breaking changes. |
-| Phase 1.5 — Workflow tools + benchmark | `v0.5.0` → `v0.9.x` | All 8 MCP tools work + labeled corpus exists. Alpha. |
-| v1.0 cutoff — Hardening | `v1.0.0` | Security model + threat model + crash-recovery test suite. First "recommended for daily use" release. |
-| Phase 2 — Trust layer | `v1.1.0` → `v1.x` | Calibrated confidence, active feedback loop, tool composition. |
-| Phase 3 — Platform | `v2.0.0` → `v2.x` | Streaming, cost transparency, schema versioning, CI/CD matrix, plugin model, telemetry. |
+| Stage 2 — Core engine | `v0.1.0` → `v0.4.x` | Index + search + 3 primary tools. Pre-alpha; expect breaking changes. |
+| Stage 3 — Workflow tools + benchmark | `v0.5.0` → `v0.9.x` | All 8 MCP tools work + labeled corpus exists. Alpha. |
+| Stage 4 — v1.0 hardening | `v1.0.0` | Security, threat model, crash-recovery test suite, **plus real-time watcher and dependency graph** (1.0-blockers per review). First "recommended for daily use" release. |
+| Stage 5 — Trust layer | `v1.1.0` → `v1.x` | Calibrated confidence, active feedback loop, tool composition, **git history indexing, Ollama backend**. |
+| Stage 6 — Platform | `v2.0.0` → `v2.x` | **Extended language support (Java, C/C++, Ruby…), LSP precision layer**, streaming, cost transparency, schema versioning, CI/CD matrix, plugin model, telemetry. |
+
+> **Note on phase vs stage**: The PRD uses "Phase 1/2/3" to describe engineering buckets (what gets built in which order). The roadmap uses "Stage 1–6" to describe release timeline. The mapping is many-to-many — PRD Phase 1 spans roadmap Stages 2 and 3; PRD Phase 2 splits between Stages 4 (watcher + dep graph) and 5 (git history); PRD Phase 3 splits between Stages 3 (benchmarks/C1) and 6 (LSP + extended langs). Always state which you mean.
+
+> **Known issue — crate name `vektor` is taken on crates.io** (`vektor = "0.2.2"`, a SIMD crate). Deferred per current decision; must be resolved before `cargo publish` of `v0.1.0`. Candidates: `vektorctx`, `vektor-mcp`, `kontxt`, or a clean rename. All docs continue to use `vektor` until renamed.
 
 **Semver discipline**: while in `v0.x`, any minor bump may break. From `v1.0` onward, follow strict semver — breaking changes only on major bumps.
 
@@ -53,15 +57,18 @@ Each arrow is a hard gate — the next stage does not begin until the previous s
 
 ---
 
-## Current State (2026-05-27)
+## Current State (2026-05-27, updated)
 
 | Item | Status |
 |---|---|
 | PRD v2.5 design complete | ✅ Done |
-| A1 — Section 11 version sweep | ✅ Done (this commit) |
-| A2 — Reconcile embedding-backend description | ⬜ Not started |
-| A3 — Fix Sec 14 vs Sec 10 metric conflict | ⬜ Not started |
-| Cargo.toml exists in repo | ⬜ Not started |
+| A1 — Section 11 version sweep | ✅ Done (commit `025e522`) |
+| A2 — Reconcile embedding-backend description | ✅ Done (commit `025e522`) |
+| A3 — Fix Sec 14 vs Sec 10 metric conflict | ✅ Done (commit `025e522`) |
+| A4 — Expand `.gitignore` | ✅ Done (commit `025e522`) |
+| External review addressed (phase rename, scope reconcile, real-time soften, G3 fix, current-state refresh) | ✅ Done (this commit) |
+| Crate name decision (`vektor` taken on crates.io) | ⏸ Deferred until `cargo publish` |
+| Cargo.toml exists in repo | ⬜ Not started (first Stage 2 deliverable) |
 | Any Rust code written | ⬜ Not started |
 
 ---
@@ -69,10 +76,10 @@ Each arrow is a hard gate — the next stage does not begin until the previous s
 ## Stage 1 — PRD Hygiene (a single afternoon)
 
 **Release tag**: none (docs only)
-**PRD reference**: A1–A3 in the PRD review
+**PRD reference**: A1–A4 in the PRD review + external reviewer feedback
 **Depends on**: nothing
-**Effort**: ~3 hours total
-**Status**: In progress (A1 done)
+**Effort**: ~5 hours total (3h hygiene + 2h responding to external review)
+**Status**: ✅ Done
 
 ### Goal
 Bring the PRD into a state where every implementation conversation downstream produces correct code, not stale-version code.
@@ -82,9 +89,15 @@ Bring the PRD into a state where every implementation conversation downstream pr
 | # | Item | Status | Effort |
 |---|---|---|---|
 | A1 | Section 11 `Cargo.toml` re-resolved against current crates.io + 2 version-related risk-table rows updated | ✅ Done | 1h |
-| A2 | Section 6.1 / Section 11 / Risk-table embedding-backend descriptions reconciled to one canonical paragraph | ⬜ | 30 min |
-| A3 | Section 14 "Phase 1 Must Have" metric `"index 5K files in <90s"` reconciled with Section 10 revised target of `<600s for 10K Jina-v2 CPU` (either change the metric to specify `--lite`, or relax to `<300s`) | ⬜ | 15 min |
-| A4 | `.gitignore` extended (target/, *.lance, *.onnx, *.db, .DS_Store, ~/.vektor/) | ⬜ | 5 min |
+| A2 | Section 6.1 / Section 11 / Risk-table embedding-backend descriptions reconciled to one canonical paragraph | ✅ Done | 30 min |
+| A3 | Section 14 "Phase 1 Must Have" metric `"index 5K files in <90s"` reconciled with Section 10 revised target | ✅ Done | 15 min |
+| A4 | `.gitignore` extended (target/, *.lance, *.onnx, *.db, .DS_Store, ~/.vektor/) | ✅ Done | 5 min |
+| R1 | External review fix: rename roadmap Phase 2/3 columns to Stages 5/6 + add many-to-many phase↔stage mapping note | ✅ Done | 20 min |
+| R2 | External review fix: PRD Section 8 + Section 14 reconciled to "v0.4 ships 3 tools, v0.5–v0.9 adds 5 workflow tools" | ✅ Done | 15 min |
+| R3 | External review fix: Executive Summary real-time claim softened to "planned for v1.0" | ✅ Done | 5 min |
+| R4 | External review fix: Goal G3 corrected from "20+ languages" to "5 core, extensible to 20+ in Stage 6" | ✅ Done | 5 min |
+| R5 | External review fix: roadmap Current State refreshed (A2/A3/A4 marked done) | ✅ Done | 5 min |
+| R6 | External review fix: crate-name conflict noted as deferred decision (`vektor` is taken) | ✅ Done | 5 min |
 
 ### Exit criteria (must all be true)
 
