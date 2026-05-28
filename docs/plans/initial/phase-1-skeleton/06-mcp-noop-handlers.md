@@ -92,7 +92,22 @@ This is the **longest task in Phase 1**. Read rmcp 1.7's docs.rs page before sta
    - Use `serde_json::json!` macro for simplicity at v0.1; switch to derive-based schemas (e.g., `schemars`) in Phase 4
 
 6. Integration test (`tests/mcp_serve.rs`):
-   - Spawn `vektor serve --transport stdio` as a subprocess
+   - **Spawn `vektor serve --transport stdio` with an isolated HOME/USERPROFILE.** Once task 1.4 wires `Config::load(cli.config.clone())` into the dispatcher, the subprocess will walk `dirs::home_dir()` to find `~/.vektor/config.toml`. On any developer/CI machine with an existing personal config (especially a malformed or future-schema one), the subprocess fails to start before MCP messages flow. Set `HOME`/`USERPROFILE` to a fresh tempdir on the child process — same isolation pattern as the config unit tests in task 1.3:
+     ```rust
+     use std::process::{Command, Stdio};
+     let fake_home = tempfile::tempdir().unwrap();
+     let mut child = Command::new(env!("CARGO_BIN_EXE_vektor"))
+         .arg("serve")
+         .args(["--transport", "stdio"])
+         .env("HOME", fake_home.path())
+         .env("USERPROFILE", fake_home.path())  // Windows
+         .stdin(Stdio::piped())
+         .stdout(Stdio::piped())
+         .stderr(Stdio::piped())
+         .spawn()
+         .expect("spawn vektor serve");
+     ```
+     Alternative: pass `--config /path/to/empty.toml` to the child, but the empty-file approach requires creating the file too. Isolating HOME is simpler and proves the subprocess truly runs against defaults.
    - Send an `initialize` request with **all three required fields** — rmcp 1.7's `InitializeRequestParams` requires `protocolVersion`, `capabilities`, AND `clientInfo`. Omitting `clientInfo` produces an invalid initialize that may be rejected before reaching `tools/list`:
      ```json
      {
