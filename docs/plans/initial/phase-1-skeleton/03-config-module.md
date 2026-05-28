@@ -45,18 +45,39 @@ Precedence (lowest to highest): defaults → file → env vars → CLI args (CLI
 
 2. Implement `Default` for every section so `Config::default()` produces the values from PRD Section 6.3 (`backend = "onnx"`, `chunk_max_lines = 200`, etc.).
 
-3. Implement `Config::load()`:
-   ```rust
-   impl Config {
-       pub fn load() -> crate::error::Result<Self> {
-           let mut builder = config::Config::builder()
-               .add_source(config::Config::try_from(&Config::default())?);
+3. Implement `Config::load(override_path: Option<PathBuf>) -> Result<Config>`:
 
-           // 1. file source (optional — present if ~/.vektor/config.toml exists)
-           if let Some(home) = dirs::home_dir() {
-               let path = home.join(".vektor").join("config.toml");
-               if path.exists() {
-                   builder = builder.add_source(config::File::from(path));
+   **Important — error mapping**: every call to a `config` crate method that returns `config::ConfigError` must be wrapped via `.map_err(|e| crate::error::VektorError::Config(e.to_string()))?`. Naked `?` will not compile because task 1.2's `VektorError` does NOT define `From<config::ConfigError>`. Two options:
+   - **Preferred**: explicit `.map_err()` at each call site (snippet below).
+   - **Alternative**: extend task 1.2's `VektorError::Config` variant to `Config(#[from] config::ConfigError)` and update the variant's `Display` accordingly. If you go this route, do it in a follow-up to task 1.2 BEFORE writing task 1.3 — the cross-task edit must be intentional.
+
+   The function signature now takes an `override_path` so the CLI's global `--config <path>` flag (task 1.4) can pass through. When `None`, fall back to the default `~/.vektor/config.toml`.
+
+   ```rust
+   use std::path::PathBuf;
+   use crate::error::{Result, VektorError};
+
+   impl Config {
+       pub fn load(override_path: Option<PathBuf>) -> Result<Self> {
+           let mut builder = config::Config::builder()
+               .add_source(
+                   config::Config::try_from(&Config::default())
+                       .map_err(|e| VektorError::Config(e.to_string()))?,
+               );
+
+           // 1. file source — explicit override if provided, else default location.
+           let file_path = override_path.or_else(|| {
+               dirs::home_dir().map(|h| h.join(".vektor").join("config.toml"))
+           });
+           if let Some(p) = file_path {
+               if p.exists() {
+                   builder = builder.add_source(config::File::from(p));
+               } else if override_path.is_some() {
+                   // If user explicitly pointed at a config that doesn't exist, error out
+                   // rather than silently using defaults (defensive: catches typos in --config).
+                   return Err(VektorError::Config(format!(
+                       "config file not found: {}", p.display()
+                   )));
                }
            }
 
@@ -70,15 +91,44 @@ Precedence (lowest to highest): defaults → file → env vars → CLI args (CLI
            builder
                .build()
                .and_then(|c| c.try_deserialize::<Config>())
-               .map_err(|e| crate::error::VektorError::Config(e.to_string()))
+               .map_err(|e| VektorError::Config(e.to_string()))
        }
    }
    ```
 
 4. Tests:
    - `test_default_config` — `Config::default()` matches PRD-section-6.3 values
-   - `test_load_from_file` — write a temp TOML file with `[embedding] backend = "openai"`, verify it loads
-   - `test_env_override` — set `VEKTOR_EMBEDDING_BACKEND=ollama` via `std::env::set_var`, verify it overrides the file value
+   - `test_load_from_file` — write a temp TOML file with `[embedding] backend = "openai"`, verify `Config::load(Some(path))` loads it
+   - `test_explicit_override_path_missing` — `Config::load(Some("/tmp/nonexistent.toml".into()))` returns `Err(VektorError::Config(_))` rather than silently using defaults
+   - `test_env_override` — set `VEKTOR_EMBEDDING_BACKEND=ollama` and verify it overrides defaults
+
+   **Rust 2024 caveat**: `std::env::set_var` is **unsafe** in edition 2024 (the project's edition). The function is also a global-process mutation that races with parallel tests. Two safe options:
+   - **Preferred**: use the [`temp-env`](https://docs.rs/temp-env) dev-dependency, which scopes env mutations to a closure and serializes them across threads:
+     ```toml
+     [dev-dependencies]
+     temp-env = "0.3"
+     ```
+     ```rust
+     #[test]
+     fn test_env_override() {
+         temp_env::with_var("VEKTOR_EMBEDDING_BACKEND", Some("ollama"), || {
+             let cfg = Config::load(None).unwrap();
+             assert_eq!(cfg.embedding.backend, "ollama");
+         });
+     }
+     ```
+   - **Acceptable but riskier**: explicit `unsafe { std::env::set_var(...) }` blocks PLUS `#[serial_test::serial]` (requires `serial_test` dev-dep) to prevent concurrent tests from setting the same var:
+     ```rust
+     #[test]
+     #[serial_test::serial]
+     fn test_env_override() {
+         unsafe { std::env::set_var("VEKTOR_EMBEDDING_BACKEND", "ollama"); }
+         let cfg = Config::load(None).unwrap();
+         unsafe { std::env::remove_var("VEKTOR_EMBEDDING_BACKEND"); }
+         assert_eq!(cfg.embedding.backend, "ollama");
+     }
+     ```
+   Pick one approach for v0.1. Do NOT write `std::env::set_var(...)` without `unsafe` — it will not compile on edition 2024.
 
 5. The `config` crate v0.15 has API changes from v0.14. Read [docs.rs/config/0.15](https://docs.rs/config/0.15) for current `Config::builder()` and `Environment` API.
 

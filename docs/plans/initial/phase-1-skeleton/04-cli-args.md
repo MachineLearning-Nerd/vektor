@@ -94,11 +94,13 @@ Define the CLI surface via `clap`'s derive macro. v0.1.0 exposes 3 top-level sub
    }
    ```
 
-3. Dispatcher:
+3. Dispatcher — **pass the parsed `--config` path through to `Config::load`** so the global flag isn't silently ignored:
    ```rust
    pub async fn run() -> crate::error::Result<()> {
        let cli = Cli::parse();
-       let _config = crate::config::Config::load()?;  // task 1.3 wire-up
+       // Task 1.3 defines Config::load(Option<PathBuf>). Forward the parsed
+       // --config flag so `vektor --config /tmp/x.toml ...` is honored.
+       let _config = crate::config::Config::load(cli.config.clone())?;
 
        match cli.command {
            Command::Index(_args) => Err(crate::error::VektorError::NotImplemented(
@@ -114,6 +116,8 @@ Define the CLI surface via `clap`'s derive macro. v0.1.0 exposes 3 top-level sub
    }
    ```
 
+   This requires task 1.3's `Config::load` signature to be `pub fn load(override_path: Option<PathBuf>) -> Result<Config>` — see the updated 03-config-module.md.
+
 4. Test:
    - `vektor --help` lists all 3 subcommands
    - `vektor index --help` shows `path`, `--force`, `--dump-chunks`
@@ -127,6 +131,7 @@ Define the CLI surface via `clap`'s derive macro. v0.1.0 exposes 3 top-level sub
 - [ ] `Cli` struct uses `#[derive(Parser)]` with `version` and `about` attributes
 - [ ] 3 subcommands present: `index`, `serve`, `models` (with `download` action)
 - [ ] Global `--config` and `--verbose` flags work on every subcommand
+- [ ] `vektor --config /tmp/test.toml <subcommand>` actually reads `/tmp/test.toml` (verify by writing a TOML with `[embedding] backend = "ollama"`, running `vektor -v <subcommand>`, and seeing the override take effect; a missing `/tmp/test.toml` must return `VektorError::Config` with the missing-file message, NOT silently fall back to defaults)
 - [ ] Each subcommand handler currently returns `VektorError::NotImplemented` with a phase reference
 - [ ] `vektor --help` exits 0 and lists subcommands
 - [ ] `vektor --version` matches `Cargo.toml`'s `version = "0.1.0"`

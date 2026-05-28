@@ -1863,7 +1863,7 @@ anyhow = "1"
 thiserror = "2"
 async-trait = "0.1"
 tracing = "0.1"
-tracing-subscriber = { version = "0.3", features = ["env-filter"] }
+tracing-subscriber = { version = "0.3", features = ["env-filter", "json"] }
 clap = { version = "4.6", features = ["derive"] }
 config = "0.15"
 toml = "1"

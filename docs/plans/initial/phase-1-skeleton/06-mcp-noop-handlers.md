@@ -96,7 +96,13 @@ This is the **longest task in Phase 1**. Read rmcp 1.7's docs.rs page before sta
    - Send `{"jsonrpc":"2.0","id":1,"method":"initialize","params":{...}}` via stdin
    - Read response from stdout
    - Send `{"jsonrpc":"2.0","id":2,"method":"tools/list"}` — verify 3 tools listed
-   - Send `{"jsonrpc":"2.0","id":3,"method":"tools/call","params":{"name":"index_codebase","arguments":{}}}` — verify the no-op response
+   - Send a `tools/call` with **schema-valid arguments** so the test doesn't depend on rmcp's validation being lax:
+     ```json
+     {"jsonrpc":"2.0","id":3,"method":"tools/call","params":{"name":"index_codebase","arguments":{"path":"/tmp/dummy"}}}
+     ```
+     The PRD §9 schema requires `path` for `index_codebase`. v0.1 handlers ignore the argument content and return the no-op JSON regardless — but the *schema* must validate so the call reaches the handler at all. Passing `{}` produces a validation failure depending on rmcp's strictness mode, which would make the test brittle. Same pattern for the other two tools when added:
+     - `search_code` → `{"query": "test", "path": "/tmp/dummy"}`
+     - `get_context_for_prompt` → `{"query": "test", "path": "/tmp/dummy", "token_budget": 8000}`
 
 7. Wire `start_stdio_server` into `Command::Serve` handler in `src/cli.rs`.
 

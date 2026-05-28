@@ -95,7 +95,7 @@ graph TD
 
 | Task | Depends on | Blocks | Status |
 |---|---|---|---|
-| 1.1 main entrypoint | 0.1, 0.3 | 1.2, 1.4 | 🟡 |
+| 1.1 main entrypoint | 0.1, 0.3 | 1.2, 1.4 | 🟢 |
 | 1.2 error module | 1.1 | 1.3 | 🟡 |
 | 1.3 config module | 1.2 | 1.4 | 🟡 |
 | 1.4 CLI args | 1.1, 1.3 | 1.5 | 🟡 |

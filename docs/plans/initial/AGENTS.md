@@ -201,10 +201,15 @@ When a task completes:
 2. Add the commit hash next to the entry: `✅ Done — \`abc1234\``
 3. If the task's `Notes / open questions` section gained new content during execution, leave the new content in place — it's institutional memory for the next maintainer
 
-When a phase completes (all tasks ✅ Done):
-1. Update `docs/plans/initial/README.md`'s Current State table
-2. Update `VEKTOR_ROADMAP.md`'s Current State table
-3. Tag the release per Stage 2 sub-release schedule (`v0.1.0`, `v0.2.0`, etc.)
+When a phase completes (all tasks ✅ Done), run this **phase-completion checklist** in the same commit (failing to do so creates doc-vs-doc drift that the next executor relies on as ground truth):
+
+1. **`docs/plans/initial/phase-N/README.md`**: every task row → ✅ Done with commit hash. Phase status header (top of file) → ✅ Done.
+2. **`docs/plans/initial/README.md`** Current State table: phase row updated; "active phase" line moved to the next phase.
+3. **`docs/plans/initial/DEPENDENCIES.md`**: every task in this phase → ✅ with commit hash. **Critically**: every task in the NEXT phase whose dependencies are now all met must be flipped from 🟡 to 🟢. Without this, agents reading DEPENDENCIES.md as the source of truth will see "no ready tasks" and stall.
+4. **`VEKTOR_ROADMAP.md`** Current State table: phase status + the file/feature roll-up that lives under the table.
+5. **Tag the release**, if the phase corresponds to a cargo version bump (e.g., Phase 1 ships `v0.1.0`). See task N.last's release subsection for the canonical tagging sequence.
+
+If any of steps 1-4 isn't done in the same commit that closes the phase, the doc landscape is inconsistent and the next agent will trip on it. Treat this as a hard rule: **phase-closure commits update all four tracker docs OR they aren't phase-closure commits.**
 
 ---
 

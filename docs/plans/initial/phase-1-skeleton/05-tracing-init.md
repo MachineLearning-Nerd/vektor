@@ -24,6 +24,12 @@ Initialize structured logging via `tracing` + `tracing-subscriber`. The `--verbo
 
 ## Approach
 
+0. **Cargo.toml prerequisite**: ensure `tracing-subscriber` has both `env-filter` AND `json` features. The committed `Cargo.toml` from task 0.1 declares only `env-filter`. `fmt::layer().json()` (used below) is gated behind the `json` feature — without it the code below produces `error[E0599]: no method named "json" found for struct Layer`. Update the line in `Cargo.toml`:
+   ```toml
+   tracing-subscriber = { version = "0.3", features = ["env-filter", "json"] }
+   ```
+   Also update PRD Section 11 Cargo.toml block to keep the canonical spec aligned. Run `cargo check` after the edit to regenerate `Cargo.lock`; commit the lockfile change with the task 1.5 commit.
+
 1. Create `src/telemetry.rs`:
    ```rust
    use tracing_subscriber::{fmt, prelude::*, EnvFilter};
