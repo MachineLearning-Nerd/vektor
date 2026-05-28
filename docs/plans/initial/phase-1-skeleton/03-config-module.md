@@ -154,6 +154,16 @@ Precedence (lowest to highest): defaults → file → env vars → CLI args (CLI
      #[serial_test::serial]
      fn test_env_override() {
          let fake_home = tempfile::tempdir().unwrap();
+         // SAVE originals so we can RESTORE them after the test.
+         // Unconditional `remove_var("HOME")` at the end leaks broken state
+         // (no HOME set) to subsequent serial tests in the SAME process — on
+         // macOS/Linux CI HOME is always set at startup, so nuking it makes
+         // `dirs::home_dir()` return None in later tests, which then fail for
+         // unrelated reasons (and the failure looks like a config bug, not a
+         // test-isolation bug — a debugging-hell scenario). Same for
+         // USERPROFILE on Windows.
+         let orig_home = std::env::var_os("HOME");
+         let orig_user_profile = std::env::var_os("USERPROFILE");
          unsafe {
              std::env::set_var("HOME", fake_home.path());
              std::env::set_var("USERPROFILE", fake_home.path());
@@ -162,8 +172,19 @@ Precedence (lowest to highest): defaults → file → env vars → CLI args (CLI
          let cfg = Config::load(None).unwrap();
          unsafe {
              std::env::remove_var("VEKTOR__EMBEDDING__BACKEND");
-             std::env::remove_var("HOME");
-             std::env::remove_var("USERPROFILE");
+             // Restore: set back to original value if there was one,
+             // otherwise actually remove (matches the process-startup state
+             // for that variable). The `temp_env` variant does this
+             // automatically — yet another reason that variant is preferred
+             // and this one is the "acceptable but riskier" fallback.
+             match orig_home {
+                 Some(v) => std::env::set_var("HOME", v),
+                 None => std::env::remove_var("HOME"),
+             }
+             match orig_user_profile {
+                 Some(v) => std::env::set_var("USERPROFILE", v),
+                 None => std::env::remove_var("USERPROFILE"),
+             }
          }
          assert_eq!(cfg.embedding.backend, "ollama");
      }

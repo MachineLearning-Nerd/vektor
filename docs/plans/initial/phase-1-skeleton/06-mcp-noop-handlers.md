@@ -88,7 +88,19 @@ This is the **longest task in Phase 1**. Read rmcp 1.7's docs.rs page before sta
                "get_context_for_prompt" => handlers::handle_get_context_for_prompt(req.arguments),
                other => return Err(...),
            };
-           Ok(CallToolResult::text(serde_json::to_string(&response)?))
+           // rmcp 1.7 does NOT expose a `CallToolResult::text(...)`
+           // shorthand — that was a 0.x idiom. The documented constructor
+           // for returning text content in 1.7 is
+           // `CallToolResult::success(vec![Content::text(...)])` (or
+           // `CallToolResult::structured(...)` for typed JSON payloads,
+           // which we'll likely adopt at Phase 4 when handlers return
+           // real schema-validated responses). Verify the exact module
+           // path for `Content` against docs.rs/rmcp/1.7.0 — likely
+           // `rmcp::model::Content` — and add the matching `use` at the
+           // top of `src/mcp/server.rs`.
+           Ok(CallToolResult::success(vec![Content::text(
+               serde_json::to_string(&response)?,
+           )]))
        }
    }
    ```
@@ -197,9 +209,26 @@ PID=$!
 sleep 1
 kill $PID
 rm -rf "$FAKE_HOME"
-# stdout should be empty (no requests sent yet); stderr should have log noise
-[ -s /tmp/stdout.txt ] && echo "FAIL: stdout had data without a request" || echo "OK"
-[ -s /tmp/stderr.txt ] && echo "OK: stderr has logs"
+# stdout should be empty (no requests sent yet); stderr should have log noise.
+# Use explicit `if/then; exit 1; fi` — the `cmd && echo "FAIL" || echo "OK"`
+# pattern is THE classic shell footgun: when `cmd` succeeds (stdout HAS data,
+# the failure case for us), `echo FAIL` runs and exits 0, the `|| echo OK`
+# branch never fires, but the line's overall exit is `echo`'s 0 — so a scripted
+# executor or CI runner sees the entire check as "passing" even when FAIL
+# printed. Protocol-corrupting stdout output must actually block task
+# completion, not just print a warning.
+if [ -s /tmp/stdout.txt ]; then
+    echo "FAIL: vektor serve stdout had data without any client request"
+    head -5 /tmp/stdout.txt
+    exit 1
+fi
+echo "OK: vektor serve stdout clean at startup"
+
+if [ ! -s /tmp/stderr.txt ]; then
+    echo "FAIL: vektor -vvv serve produced no stderr — tracing init may be broken"
+    exit 1
+fi
+echo "OK: stderr has log output at -vvv"
 ```
 
 ## Notes / open questions

@@ -79,9 +79,18 @@ Define the CLI surface via `clap`'s derive macro. v0.1.0 exposes 3 top-level sub
 
    #[derive(clap::Args, Debug)]
    pub struct ServeArgs {
-       /// Transport mode: stdio (default) or sse
-       #[arg(long, default_value = "stdio")]
-       pub transport: String,
+       /// Transport mode: stdio or sse. When omitted, falls back to
+       /// `[server] mode` from the config file (or `VEKTOR__SERVER__MODE`
+       /// env var); ultimate default is "stdio" via `ServerConfig::default()`
+       /// in task 1.3. See the dispatcher snippet below for resolution.
+       ///
+       /// IMPORTANT: do NOT add `default_value = "stdio"`. A clap default
+       /// makes the CLI value always-defined, masking any config-level
+       /// override even when `VEKTOR__SERVER__MODE=sse` is set — which
+       /// violates the documented defaults → file → env → CLI precedence
+       /// from task 1.3 / PRD §6.3.
+       #[arg(long)]
+       pub transport: Option<String>,
    }
 
    #[derive(Subcommand, Debug)]
@@ -106,9 +115,25 @@ Define the CLI surface via `clap`'s derive macro. v0.1.0 exposes 3 top-level sub
            Command::Index(_args) => Err(crate::error::VektorError::NotImplemented(
                "vektor index (Phase 2)",
            )),
-           Command::Serve(_args) => Err(crate::error::VektorError::NotImplemented(
-               "vektor serve (Phase 1 task 1.6 partial; Phase 4 full)",
-           )),
+           Command::Serve(args) => {
+               // Resolve transport with the documented defaults → file → env → CLI
+               // precedence. CLI flag wins when set; otherwise fall back to
+               // `_config.server.mode` (which task 1.3's loader already merged
+               // from file + env, with "stdio" as the `ServerConfig::default`).
+               // A `default_value = "stdio"` on the clap arg would mask config-
+               // level overrides because the CLI value would always be defined
+               // as "stdio" — making `[server] mode = "sse"` or
+               // `VEKTOR__SERVER__MODE=sse` silently no-op. Task 1.6's
+               // `start_stdio_server` consumes the resolved value; at task 1.4
+               // we just compute and bind it (the `_transport` underscore
+               // prefix silences "unused" until 1.6 hooks it up).
+               let _transport = args
+                   .transport
+                   .unwrap_or_else(|| _config.server.mode.clone());
+               Err(crate::error::VektorError::NotImplemented(
+                   "vektor serve (Phase 1 task 1.6 partial; Phase 4 full)",
+               ))
+           },
            Command::Models { action: ModelsAction::Download { .. } } => Err(
                crate::error::VektorError::NotImplemented("vektor models download (Phase 3)"),
            ),
@@ -149,6 +174,7 @@ Define the CLI surface via `clap`'s derive macro. v0.1.0 exposes 3 top-level sub
 - [ ] `vektor --help` exits 0 and lists subcommands
 - [ ] `vektor --version` matches `Cargo.toml`'s `version = "0.1.0"`
 - [ ] Each subcommand has its own `--help` showing args
+- [ ] **`ServeArgs.transport` is `Option<String>` with NO clap `default_value`** — the dispatcher resolves "stdio" via `_config.server.mode` so `VEKTOR__SERVER__MODE=...` and `[server] mode = "sse"` aren't silently masked by a CLI-side default (preserves the precedence contract from task 1.3 / PRD §6.3). Verify by reading the rendered `vektor serve --help` output: it should show `--transport <TRANSPORT>` with no `[default: stdio]` suffix.
 - [ ] `cargo test cli::tests` passes (snapshot tests for help output via `insta` optional but recommended)
 - [ ] `cargo clippy --all-targets -- -D warnings` clean
 

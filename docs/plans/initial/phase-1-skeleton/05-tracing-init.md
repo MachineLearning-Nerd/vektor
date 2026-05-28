@@ -127,8 +127,15 @@ if ! echo "$FIRST_STDERR_LINE" | python3 -c "import sys, json; json.loads(sys.st
 fi
 echo "OK: vektor serve emits JSON on stderr"
 
-# stdout untouched on serve (reserved for MCP)
-./target/debug/vektor -v serve > /tmp/stdout.txt 2>/dev/null
+# stdout untouched on serve (reserved for MCP).
+# At task 1.5, `vektor serve` still returns `VektorError::NotImplemented` (task
+# 1.6 is what implements the real MCP server), so this binary call exits
+# non-zero. Tolerate the expected failure explicitly with `|| true` — without
+# it, the `set -e` at the top of this block aborts the script HERE, before the
+# stdout-cleanliness `if [ -s ... ]` check ever runs. Because all preceding
+# checks already printed "OK", the truncated run would look successful in a
+# scrollback even though the most important assertion was skipped.
+./target/debug/vektor -v serve > /tmp/stdout.txt 2>/dev/null || true
 if [ -s /tmp/stdout.txt ]; then
     echo "FAIL: vektor serve stdout should be empty at startup; got:"
     head -5 /tmp/stdout.txt
