@@ -45,13 +45,32 @@ This is the **longest task in Phase 1**. Read rmcp 1.7's docs.rs page before sta
    └── schemas.rs    — Input JSON schemas for the 3 tools (v0.1 input-only; PRD §9-shape output schemas are deferred to Phase 4 when handlers do real work — see step 5 below for the rationale)
    ```
 
-3. Implement `VektorServer`:
+3. Implement `VektorServer`. **Two non-obvious requirements** the rest of the sketch depends on:
+
+   **(a)** Override `get_info()` to advertise the `tools` capability. rmcp 1.7's `ServerHandler` default `get_info()` returns a `ServerInfo` with empty `ServerCapabilities`. Without `tools: {}` in the initialize response, well-behaved MCP clients (including Claude Code's tool-discovery logic) won't know the server supports `tools/list` or `tools/call` and may never call them. Manual JSON tests against `tools/list` directly will still pass because rmcp lets requests through, but real clients short-circuit on capabilities.
+
+   **(b)** Either drop the `config: Config` field or actually read it. At v0.1 the no-op handlers don't consume config, so storing it triggers `dead_code` on the field under `clippy -D warnings`. The cleanest v0.1 approach: drop the field entirely. When task 4.6 (`index_codebase` orchestrator, Phase 4) lands, the field comes back as the natural shape — at that point handlers genuinely use it.
+
    ```rust
-   pub struct VektorServer {
-       config: Config,
-   }
+   // Field-less VektorServer at v0.1. Config will be added when handlers consume it (Phase 4).
+   pub struct VektorServer;
 
    impl ServerHandler for VektorServer {
+       // Override get_info to advertise tools capability in initialize response.
+       fn get_info(&self) -> ServerInfo {
+           ServerInfo {
+               protocol_version: ProtocolVersion::default(),
+               capabilities: ServerCapabilities::builder()
+                   .enable_tools()           // ← advertises tools support
+                   .build(),
+               server_info: Implementation {
+                   name: "vektor".into(),
+                   version: env!("CARGO_PKG_VERSION").into(),
+               },
+               instructions: None,
+           }
+       }
+
        fn list_tools(&self, _req: ListToolsRequest) -> Result<ListToolsResult, ...> {
            Ok(ListToolsResult {
                tools: vec![
@@ -74,7 +93,7 @@ This is the **longest task in Phase 1**. Read rmcp 1.7's docs.rs page before sta
    }
    ```
 
-   (The actual rmcp 1.7 API signatures will differ — verify against docs.rs.)
+   The exact API surface in rmcp 1.7 may differ (`ServerInfo`, `Implementation`, `ServerCapabilities::builder().enable_tools()` are illustrative names — verify against [docs.rs/rmcp/1.7.0](https://docs.rs/rmcp/1.7.0)). The contract is what matters: **initialize response advertises `tools` capability**, and **`VektorServer` has no unread field**.
 
 4. Each handler returns the no-op JSON:
    ```rust
@@ -121,7 +140,15 @@ This is the **longest task in Phase 1**. Read rmcp 1.7's docs.rs page before sta
        }
      }
      ```
-   - Read response from stdout
+   - Read the initialize response from stdout and **assert that `result.capabilities.tools` is present (not null/missing)**. This is the contract from step 3 — without it, clients won't discover the tools even though tools/list works directly. Sample assertion against the parsed JSON response:
+     ```rust
+     let init_resp: serde_json::Value = serde_json::from_str(&line).unwrap();
+     assert!(
+         init_resp["result"]["capabilities"]["tools"].is_object()
+             || init_resp["result"]["capabilities"]["tools"] == serde_json::json!({}),
+         "initialize response must advertise tools capability; got: {init_resp:#}",
+     );
+     ```
    - Send `{"jsonrpc":"2.0","id":2,"method":"tools/list"}` — verify 3 tools listed
    - Send a `tools/call` with **schema-valid arguments** so the test doesn't depend on rmcp's validation being lax:
      ```json
@@ -136,6 +163,8 @@ This is the **longest task in Phase 1**. Read rmcp 1.7's docs.rs page before sta
 ## Acceptance criteria
 
 - [ ] `vektor serve` starts and stays running (until SIGTERM or stdin EOF)
+- [ ] `initialize` response advertises `capabilities.tools` (overridden `get_info()` per Approach step 3a). Integration test asserts this — see step 6.
+- [ ] `VektorServer` has no unread fields (per Approach step 3b — `config: Config` deferred to Phase 4 when handlers consume it)
 - [ ] `tools/list` returns exactly the 3 expected tool names
 - [ ] Each `tools/call` returns the no-op JSON with `phase` field set
 - [ ] `tools/call` with an unknown tool name returns an MCP error response (not a crash)

@@ -100,19 +100,44 @@ Initialize structured logging via `tracing` + `tracing-subscriber`. The `--verbo
 
 ## Verification
 
+> **Verification commands MUST exit non-zero on failed checks.** The previous form used patterns like `cmd && echo FAIL || echo OK`, whose final exit status is `echo`'s — always 0 — so a CI runner sees "passed" even when FAIL is printed. The patterns below use explicit `if/then/exit 1` so any failed check propagates a non-zero exit, which an executor (CI, agent, human-with-`set -e`) can actually detect.
+
 ```bash
-# Default: no info
-./target/debug/vektor index /tmp 2>&1 | grep -q "INFO" && echo "FAIL: should be no INFO at default level" || echo "OK"
+set -e   # belt-and-braces: bash exits on first unhandled failure
 
-# -v: info shown
-./target/debug/vektor -v index /tmp 2>&1 | grep -q "INFO" && echo "OK: info shown with -v"
+# Default: no INFO logs (level = WARN)
+if ./target/debug/vektor index /tmp 2>&1 | grep -q "INFO"; then
+    echo "FAIL: should be no INFO output at default level"
+    exit 1
+fi
+echo "OK: default level suppresses INFO"
 
-# serve uses JSON
-./target/debug/vektor -v serve 2>&1 | head -1 | python3 -c "import sys, json; json.loads(sys.stdin.read())" && echo "OK: JSON parse" || echo "FAIL: not JSON"
+# -v: INFO shown
+if ! ./target/debug/vektor -v index /tmp 2>&1 | grep -q "INFO"; then
+    echo "FAIL: -v should produce INFO output"
+    exit 1
+fi
+echo "OK: -v produces INFO"
 
-# stdout untouched on serve
+# serve uses JSON on stderr
+FIRST_STDERR_LINE=$(./target/debug/vektor -v serve 2>&1 1>/dev/null | head -1)
+if ! echo "$FIRST_STDERR_LINE" | python3 -c "import sys, json; json.loads(sys.stdin.read())" >/dev/null 2>&1; then
+    echo "FAIL: vektor serve stderr should be JSON; first line was: $FIRST_STDERR_LINE"
+    exit 1
+fi
+echo "OK: vektor serve emits JSON on stderr"
+
+# stdout untouched on serve (reserved for MCP)
 ./target/debug/vektor -v serve > /tmp/stdout.txt 2>/dev/null
-[ -s /tmp/stdout.txt ] && echo "FAIL: stdout should be empty for serve startup" || echo "OK: stdout clean"
+if [ -s /tmp/stdout.txt ]; then
+    echo "FAIL: vektor serve stdout should be empty at startup; got:"
+    head -5 /tmp/stdout.txt
+    exit 1
+fi
+echo "OK: vektor serve stdout clean at startup"
+
+rm -f /tmp/stdout.txt
+echo "OK: all tracing verification checks passed"
 ```
 
 ## Notes / open questions

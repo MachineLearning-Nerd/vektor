@@ -55,22 +55,35 @@ This task establishes the **error contract** that every subsequent module will f
    #[tokio::main]
    async fn main() -> anyhow::Result<()> {
        // task 1.2 placeholder — construct every VektorError variant so the
-       // bin target's dead_code analyzer sees them as live. By task 1.4
-       // (CLI dispatch), every variant has a real consumer: Config in
-       // Config::load, NotImplemented in cli::run's match arms, Io via ?
-       // on file ops, Mcp in the mcp module (task 1.6). Remove this block
-       // once that's in place.
+       // bin target's dead_code analyzer sees them as live.
+       //
+       // VARIANT LIFETIMES (each variant gets removed at the task that
+       // genuinely constructs it):
+       //   - Config         → removed at task 1.4 (cli::run propagates
+       //                      VektorError::Config via Config::load(None)?)
+       //   - NotImplemented → removed at task 1.4 (cli::run match arms
+       //                      return VektorError::NotImplemented("..."))
+       //   - Mcp            → KEPT until task 1.6 (the mcp module is the
+       //                      first real consumer; tasks 1.4 and 1.5 do
+       //                      NOT touch this variant)
+       //   - Io             → not in this block; #[from] std::io::Error
+       //                      auto-counts it via the From impl
+       //
+       // Tasks 1.4 and 1.5 MUST keep the Mcp construction or clippy fails
+       // on the bin target with "variant Mcp is never constructed".
        let _placeholder_variants = (
-           error::VektorError::Config(String::new()),
-           error::VektorError::NotImplemented("task 1.2 placeholder"),
-           error::VektorError::Mcp(String::new()),
+           error::VektorError::Config(String::new()),         // remove at 1.4
+           error::VektorError::NotImplemented("task 1.2 placeholder"),  // remove at 1.4
+           error::VektorError::Mcp(String::new()),            // KEEP until 1.6
        );
        let _placeholder_alias: error::Result<()> = Ok(());
 
        cli::run().await
    }
    ```
-   The tuple is bound to `_placeholder_variants` (leading underscore silences `unused_variables` while the constructions still count as "uses" for dead_code). Same pattern philosophy as the round-3 fix for `Config::load(None)`, but tuned to enum-variant semantics rather than function-name semantics. Both placeholder blocks disappear by task 1.4 when CLI dispatch starts genuinely consuming the variants.
+   The tuple is bound to `_placeholder_variants` (leading underscore silences `unused_variables` while the constructions still count as "uses" for dead_code). Same pattern philosophy as the round-3 fix for `Config::load(None)`, but tuned to enum-variant semantics rather than function-name semantics.
+
+   **Important — staggered removal**: do NOT delete the whole block at task 1.4. Config and NotImplemented can go (task 1.4 constructs them naturally), but the Mcp construction must remain until task 1.6 actually instantiates the MCP server. Removing the Mcp line at task 1.4 or 1.5 will fail `cargo clippy --all-targets -- -D warnings` with `variant Mcp is never constructed`. Task 1.6's removal step deletes the remaining line + the `_placeholder_alias` line.
 
 5. Verify `cargo check` still passes — no breaking changes to existing code.
 6. Add unit tests that exercise each error variant's `Display` output and reference the `Result<T>` alias. (Note: tests alone are NOT sufficient for the bin-target clippy gate — see step 4's main.rs placeholder. Tests cover the test-target dead_code analysis; the placeholder covers the bin-target.)
