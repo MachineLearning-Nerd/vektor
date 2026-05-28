@@ -4,7 +4,7 @@
 
 **Roadmap mapping**: prerequisite for Stage 2 / v0.1.0
 **Effort estimate**: 4–8 hours total (all S/M tasks)
-**Status**: ⬜ Not started
+**Status**: ✅ **Done** — all 4 tasks complete; Phase 1 unblocked.
 
 ---
 
@@ -13,7 +13,7 @@
 | ID | Task | Effort | Status | Commit |
 |---|---|---|---|---|
 | 0.1 | [cargo init + Cargo.toml](01-cargo-init.md) | S | ✅ Done | `a3a2c2a` (preceded by spec fixes `93bc389`, `a5d22fd`) |
-| 0.2 | [CI skeleton — GitHub Actions](02-ci-skeleton.md) | M | ⬜ | — |
+| 0.2 | [CI skeleton — GitHub Actions](02-ci-skeleton.md) | M | ✅ Done | `73ed9d9` (followed by protoc fix `080305d`) |
 | 0.3 | [Pre-commit hooks — rustfmt + clippy](03-pre-commit-hooks.md) | S | ✅ Done | `689d5b2` |
 | 0.4 | [cargo-deny supply-chain baseline](04-cargo-deny.md) | S | ✅ Done | `08361cc` |
 

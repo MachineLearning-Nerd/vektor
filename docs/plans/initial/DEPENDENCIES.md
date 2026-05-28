@@ -87,7 +87,7 @@ graph TD
 | Task | Depends on | Blocks | Status |
 |---|---|---|---|
 | 0.1 cargo init + Cargo.toml | (none) | 0.2, 0.3, 0.4, 1.1 | ✅ `a3a2c2a` |
-| 0.2 CI skeleton | 0.1 | 1.7 | 🟢 (unblocked; needs GitHub remote setup before dispatch) |
+| 0.2 CI skeleton | 0.1 | 1.7 | ✅ `73ed9d9` + protoc fix `080305d` |
 | 0.3 Pre-commit hooks | 0.1 | 1.1 | ✅ `689d5b2` |
 | 0.4 cargo-deny baseline | 0.1 | 1.7 | ✅ `08361cc` |
 

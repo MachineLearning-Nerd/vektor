@@ -75,8 +75,10 @@ Each arrow is a hard gate — the next stage does not begin until the previous s
 | `Cargo.lock` + `src/main.rs` + `rust-toolchain.toml` exist | ✅ Done (commit `a3a2c2a`) |
 | Pre-commit hooks configured (task 0.3) | ✅ Done (commit `689d5b2`) |
 | cargo-deny baseline + audit workflow (task 0.4) | ✅ Done (commit `08361cc`) |
-| GitHub Actions CI workflow (task 0.2) | ⏸ Awaits GitHub remote setup |
-| Any Rust code beyond `fn main()` stub | ⬜ Not started (Phase 1 begins after task 0.2) |
+| GitHub Actions CI workflow (task 0.2) | ✅ Done (commits `73ed9d9` + protoc fix `080305d`) — green on macOS+Linux |
+| GitHub repo created and pushed | ✅ Private at https://github.com/MachineLearning-Nerd/vektor |
+| **Phase 0 (Scaffolding)** | ✅ **DONE — all 4 tasks complete** |
+| Any Rust code beyond `fn main()` stub | ⬜ Not started (Phase 1 / task 1.1 is the next active work) |
 
 ---
 
