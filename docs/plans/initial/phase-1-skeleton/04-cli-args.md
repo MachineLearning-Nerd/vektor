@@ -189,12 +189,27 @@ cargo build
 ./target/debug/vektor models download --help
 
 # Stub exits non-zero with NotImplemented.
+#
+# ISOLATE HOME/USERPROFILE first. Task 1.4 wires
+# `Config::load(cli.config.clone())` into the dispatcher, so this binary
+# invocation parses the developer's REAL `~/.vektor/config.toml` BEFORE
+# reaching the NotImplemented stub. A malformed local config (typo,
+# future-schema field, leftover from a different Vektor checkout) would
+# fail this check with a config error — and the test reads as
+# "FAIL: not implemented missing" even though the bug is in the
+# developer's env, not the CLI stub. Same isolation pattern as task 1.3's
+# unit tests. (`--help` / `--version` above DON'T need this because clap
+# short-circuits and exits before `cli::run` — and thus `Config::load` —
+# is reached.)
+FAKE_HOME=$(mktemp -d)
+#
 # Capture the binary's exit status FIRST (before any pipe — pipe-final-status
 # is grep's status, not vektor's). Then assert both: (a) vektor exited non-zero,
 # (b) its output contained "not implemented". A handler that printed the phrase
 # and returned Ok(()) would slip through a grep-only check.
-OUTPUT=$(./target/debug/vektor index /tmp 2>&1)
+OUTPUT=$(HOME="$FAKE_HOME" USERPROFILE="$FAKE_HOME" ./target/debug/vektor index /tmp 2>&1)
 VEKTOR_EXIT=$?
+rm -rf "$FAKE_HOME"
 [ $VEKTOR_EXIT -ne 0 ] || { echo "FAIL: vektor index returned exit 0; should be non-zero for NotImplemented"; exit 1; }
 echo "$OUTPUT" | grep -q "not implemented" || { echo "FAIL: vektor index output missing 'not implemented'"; exit 1; }
 echo "OK: vektor index exited $VEKTOR_EXIT with NotImplemented message"

@@ -98,8 +98,22 @@ This is the **longest task in Phase 1**. Read rmcp 1.7's docs.rs page before sta
            // path for `Content` against docs.rs/rmcp/1.7.0 — likely
            // `rmcp::model::Content` — and add the matching `use` at the
            // top of `src/mcp/server.rs`.
+           //
+           // `response.to_string()` (the `Display` impl on
+           // `serde_json::Value`) is the INFALLIBLE serializer; safe for
+           // our `json!{...}` payloads, which are guaranteed serializable.
+           // DO NOT write `serde_json::to_string(&response)?` here — that
+           // pushes a `serde_json::Error` up the return type, but rmcp
+           // 1.7's `call_tool` returns
+           // `Result<CallToolResult, rmcp::ErrorData>` with no
+           // `From<serde_json::Error> for ErrorData` impl, so `?` fails
+           // to compile at task 1.6. For Phase 4's typed/fallible
+           // serialization, the proper bridge is
+           // `.map_err(|e| ErrorData::internal_error(e.to_string(), None))?`
+           // — or just switch to `CallToolResult::structured(response)`,
+           // which consumes the `Value` directly with no text round-trip.
            Ok(CallToolResult::success(vec![Content::text(
-               serde_json::to_string(&response)?,
+               response.to_string(),
            )]))
        }
    }
