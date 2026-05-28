@@ -1720,17 +1720,28 @@ Vektor exposes MCP Resources for passive context subscription (see Section 7.5):
       "command": "/usr/local/bin/vektor",
       "args": ["serve"],
       "env": {
-        "VEKTOR_EMBED_BACKEND": "onnx",
-        "VEKTOR_OPENAI_API_KEY": "",
-        "VEKTOR_DATA_DIR": "~/.vektor"
+        "VEKTOR__EMBEDDING__BACKEND": "onnx",
+        "VEKTOR__EMBEDDING__OPENAI_API_KEY": "",
+        "VEKTOR__INDEX__DATA_DIR": "~/.vektor"
       }
     }
   }
 }
 ```
 
-> **Env var override convention:** Any config key can be overridden via `VEKTOR_` prefix.
-> e.g., `VEKTOR_EMBED_BACKEND=openai`, `VEKTOR_OPENAI_BASE_URL=https://api.voyageai.com/v1`
+> **Env var override convention:** Any config key can be overridden via `VEKTOR__SECTION__KEY` —
+> double underscore between path elements so that compound key names like `openai_api_key`
+> survive intact. Schema: `VEKTOR` prefix + `_` prefix-separator + `__` section-separator +
+> snake-case key name. Examples mapped to TOML paths:
+> - `VEKTOR__EMBEDDING__BACKEND=openai` → `[embedding] backend = "openai"`
+> - `VEKTOR__EMBEDDING__OPENAI_BASE_URL=https://api.voyageai.com/v1` → `[embedding] openai_base_url = ...`
+> - `VEKTOR__INDEX__DATA_DIR=~/.vektor` → `[index] data_dir = "~/.vektor"`
+> - `VEKTOR__SERVER__MODE=sse` → `[server] mode = "sse"`
+>
+> Single-underscore separation (`VEKTOR_EMBEDDING_BACKEND`) is **not** supported because
+> it ambiguates compound key names: `VEKTOR_EMBEDDING_OPENAI_API_KEY` would mis-map to
+> `embedding.openai.api.key` instead of `embedding.openai_api_key`. The double-underscore
+> scheme is unambiguous.
 
 ---
 

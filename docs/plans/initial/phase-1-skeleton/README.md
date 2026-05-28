@@ -33,7 +33,8 @@ All must be true before tagging `v0.1.0`:
 - [ ] `vektor index /some/path` parses arguments and exits with a "not implemented" message (does not crash, does not silently succeed)
 - [ ] `vektor models download` parses arguments and exits with a "not implemented" message
 - [ ] CI green on macOS-latest + ubuntu-latest with `cargo fmt --check`, `cargo clippy -- -D warnings`, `cargo test`, `cargo doc`
-- [ ] `gh release create v0.1.0` (or equivalent) ships downloadable binaries for both platforms
+- [ ] `gh release create v0.1.0` creates a notes-only GitHub Release (zero binary attachments at v0.1.0 per the roadmap; binaries land at v0.4.0 / task 6.2)
+- [ ] `cargo install --git https://github.com/MachineLearning-Nerd/vektor --tag v0.1.0` succeeds on a fresh machine
 - [ ] `README.md` walks a fresh user from `cargo install` (or binary download) to `vektor --help` in 3 commands
 
 ---
@@ -63,9 +64,14 @@ If during Phase 1 execution you find yourself implementing any of the above, **s
 
 ## When this phase completes
 
-1. Mark all tasks ✅ in the table above with commit hashes
-2. Tag `v0.1.0` via `git tag -a v0.1.0 -m "Skeleton release"` and push the tag
-3. Verify CI produced release artifacts
-4. Update `docs/plans/initial/README.md` Current State table
-5. Update `VEKTOR_ROADMAP.md` Current State table
-6. **Expand Phase 2** (`phase-2-discovery-chunking/`) from task list to per-task files. This is itself a task in Phase 1's exit criteria — do not start Phase 2 work until the task files exist.
+The sequence is owned by task 1.7 — follow its Approach steps in order. Summary for quick reference:
+
+1. Pre-flight: CI green on main, tasks 0.1–1.6 all ✅, working tree clean (per task 1.7 step 1)
+2. Generate `release-notes-v0.1.0.md` from commit history (per task 1.7 step 3)
+3. Expand `phase-2-discovery-chunking/` per-task files (per task 1.7 step 4)
+4. Update tracker docs (this README, `plans/initial/README.md`, `DEPENDENCIES.md`, `VEKTOR_ROADMAP.md`) (per task 1.7 step 5)
+5. Final commit + push + **wait for CI green on the released commit** (per task 1.7 step 6)
+6. Tag `v0.1.0` and push the tag (per task 1.7 step 7)
+7. Create the GitHub Release with `--notes-file release-notes-v0.1.0.md` — no binary attachments (per task 1.7 step 9)
+
+Do NOT shortcut this sequence — task 1.7's reviewer-validated ordering exists to keep the tag pointing at a CI-validated commit.

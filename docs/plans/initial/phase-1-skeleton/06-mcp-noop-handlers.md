@@ -145,7 +145,7 @@ kill $PID
 ## Notes / open questions
 
 - **rmcp 1.7 API churn**: the API differs from the 0.x examples in PRD Section 12. The PRD's Function 4.7 skeleton uses `RegisterTool` macros that may not exist in 1.7. The fix is in the executing task: read 1.7 docs, adapt the design. Do not regress to 0.x just because the PRD says so — the PRD's Risk-13 update already flagged this gap.
-- **JSON schemas vs `schemars`**: at v0.1.0 we write JSON schemas by hand in `schemars::json!`. In Phase 4 we may switch to `schemars` derive macros so input types and schemas stay in sync. Not worth it yet.
+- **JSON schemas vs `schemars`**: at v0.1.0 we write JSON schemas by hand using **`serde_json::json!`** (the `schemars` crate is NOT a Cargo.toml dependency at v0.1.0). The Approach section above uses `serde_json::json!` consistently — follow that. In Phase 4 we may add `schemars` as a dep and use its derive macros so input types and schemas stay in sync. Not worth it yet.
 - **Stdio vs SSE**: only stdio in v0.1.0. SSE transport adds auth concerns (PRD B2.3 — Phase 4 territory). Return `VektorError::NotImplemented` for `--transport sse`.
 - **Async vs sync handlers**: rmcp 1.7 supports both. We use async (already in a tokio context per main); future handlers that hit LanceDB / ONNX need async.
 - **Test isolation**: spawning a real `vektor serve` subprocess in tests is slow (1s per test). Keep integration tests minimal; unit-test the handlers directly.

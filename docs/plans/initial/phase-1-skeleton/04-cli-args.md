@@ -116,8 +116,10 @@ Define the CLI surface via `clap`'s derive macro. v0.1.0 exposes 3 top-level sub
    }
    ```
 
-   Then in `src/main.rs`:
+   Then in `src/main.rs` — note the `use clap::Parser;` import; without it, `Cli::parse()` fails with E0599 because `.parse()` is a method on the `Parser` trait that must be in scope at the call site:
    ```rust
+   use clap::Parser;  // brings Cli::parse() into scope
+
    #[tokio::main]
    async fn main() -> anyhow::Result<()> {
        let cli = cli::Cli::parse();
