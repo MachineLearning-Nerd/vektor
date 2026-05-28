@@ -46,6 +46,15 @@ jobs:
         with:
           components: rustfmt, clippy
 
+      # lance-encoding's build.rs invokes protoc to generate Rust types from
+      # .proto files. CI runners (ubuntu-latest, macos-latest) don't have
+      # protoc installed by default. arduino/setup-protoc handles install
+      # cross-platform.
+      - name: Install protoc
+        uses: arduino/setup-protoc@v3
+        with:
+          repo-token: ${{ secrets.GITHUB_TOKEN }}
+
       - name: Cache Cargo deps
         uses: Swatinem/rust-cache@v2
 
