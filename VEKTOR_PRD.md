@@ -1812,7 +1812,7 @@ version = "0.1.0"
 edition = "2024"
 description = "Local-first coding context engine MCP server"
 license = "MIT"
-rust-version = "1.88"  # required by ort 2.0.0-rc.12
+rust-version = "1.91"  # required by lancedb 0.29 (transitive lance crates need 1.91); ort 2.0.0-rc.12 floor is 1.88 but the higher pin wins
 
 [dependencies]
 # MCP Protocol

@@ -30,7 +30,7 @@ The point of this task is to make every subsequent code-landing task auditable b
    - Trigger on `push` to `main` and on `pull_request` targeting `main`
    - Use a matrix: `os: [macos-latest, ubuntu-latest]` (lite matrix; full matrix in 6.2)
    - Cache the Cargo registry, git index, and `target/` via `Swatinem/rust-cache@v2`
-   - Install Rust 1.88 via `dtolnay/rust-toolchain@stable` reading from `rust-toolchain.toml`
+   - Install Rust 1.91 via `dtolnay/rust-toolchain@stable` reading from `rust-toolchain.toml`
    - Steps in order: `cargo fmt --check`, `cargo clippy --workspace --all-targets -- -D warnings`, `cargo test --workspace`, `cargo doc --workspace --no-deps`
    - Fail fast: any step failure stops the job
 2. Use `concurrency` group on `${{ github.workflow }}-${{ github.ref }}` with `cancel-in-progress: true` so old runs are killed when a PR is updated
@@ -110,7 +110,7 @@ jobs:
       - uses: actions/checkout@v4
       - uses: dtolnay/rust-toolchain@stable
         with:
-          toolchain: 1.88.0
+          toolchain: 1.91.0
           components: rustfmt, clippy
       - uses: Swatinem/rust-cache@v2
       - run: cargo fmt --check
