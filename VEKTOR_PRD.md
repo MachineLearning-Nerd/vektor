@@ -1849,7 +1849,10 @@ lancedb = "0.29"
 tantivy = "0.26"
 
 # State Storage
-rusqlite = { version = "0.40", features = ["bundled"] }
+# rusqlite 0.39 pulls libsqlite3-sys 0.37; rusqlite 0.40 pulls libsqlite3-sys 0.38
+# which uses unstable cfg_select! macro (rust-lang/rust#115585, not stable in 1.93).
+# Pinned to 0.39 until libsqlite3-sys 0.38.x emits a patch release. Revisit periodically.
+rusqlite = { version = "0.39", features = ["bundled"] }
 
 # Utilities
 rayon = "1.12"
