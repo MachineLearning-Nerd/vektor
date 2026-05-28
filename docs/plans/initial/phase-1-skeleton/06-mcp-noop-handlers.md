@@ -88,12 +88,24 @@ This is the **longest task in Phase 1**. Read rmcp 1.7's docs.rs page before sta
    ```
 
 5. Tool schemas (`src/mcp/schemas.rs`):
-   - For each tool, define input + output JSON schemas matching PRD Section 9
+   - For each tool, define **only `input_schema`** at v0.1.0 — matching PRD Section 9's request shapes. Do NOT advertise PRD Section 9's response shapes as `output_schema`. The PRD §9 output shapes describe the REAL handler responses (rich `context` / `chunks` / `metadata` payloads); at v0.1.0 every handler returns the no-op `{"status": "not implemented yet", "phase": "..."}` JSON, which would violate any output_schema we publish. Omit `output_schema` from the tool declarations at v0.1.0. **Phase 4 (when handlers do real work) adds the output_schema fields to match PRD §9.** If rmcp 1.7 requires an output_schema field, publish a minimal stub matching the no-op shape: `{"type": "object", "properties": {"status": {"type": "string"}, "phase": {"type": "string"}}}`.
    - Use `serde_json::json!` macro for simplicity at v0.1; switch to derive-based schemas (e.g., `schemars`) in Phase 4
 
 6. Integration test (`tests/mcp_serve.rs`):
    - Spawn `vektor serve --transport stdio` as a subprocess
-   - Send `{"jsonrpc":"2.0","id":1,"method":"initialize","params":{...}}` via stdin
+   - Send an `initialize` request with **all three required fields** — rmcp 1.7's `InitializeRequestParams` requires `protocolVersion`, `capabilities`, AND `clientInfo`. Omitting `clientInfo` produces an invalid initialize that may be rejected before reaching `tools/list`:
+     ```json
+     {
+       "jsonrpc": "2.0",
+       "id": 1,
+       "method": "initialize",
+       "params": {
+         "protocolVersion": "2024-11-05",
+         "capabilities": {},
+         "clientInfo": { "name": "vektor-integration-test", "version": "0.1.0" }
+       }
+     }
+     ```
    - Read response from stdout
    - Send `{"jsonrpc":"2.0","id":2,"method":"tools/list"}` — verify 3 tools listed
    - Send a `tools/call` with **schema-valid arguments** so the test doesn't depend on rmcp's validation being lax:
@@ -123,7 +135,7 @@ This is the **longest task in Phase 1**. Read rmcp 1.7's docs.rs page before sta
 ```bash
 # Spawn server and send a manual request
 {
-  echo '{"jsonrpc":"2.0","id":1,"method":"initialize","params":{"protocolVersion":"2024-11-05","capabilities":{}}}'
+  echo '{"jsonrpc":"2.0","id":1,"method":"initialize","params":{"protocolVersion":"2024-11-05","capabilities":{},"clientInfo":{"name":"manual-test","version":"0.1.0"}}}'
   sleep 0.1
   echo '{"jsonrpc":"2.0","id":2,"method":"tools/list"}'
   sleep 0.1

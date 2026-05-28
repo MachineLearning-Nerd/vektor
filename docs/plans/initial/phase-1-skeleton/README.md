@@ -1,6 +1,6 @@
 # Phase 1 — Skeleton (`v0.1.0`)
 
-> **Goal**: `vektor index` and `vektor serve` parse CLI args; `vektor serve` registers a no-op MCP server with rmcp 1.7. README and LICENSE in place. CI green on macOS + Linux. Tagged `v0.1.0` and downloadable as a binary.
+> **Goal**: `vektor index` and `vektor serve` parse CLI args; `vektor serve` registers a no-op MCP server with rmcp 1.7. README and LICENSE in place. CI green on macOS + Linux. **Tagged `v0.1.0` and installable via `cargo install --git ... --tag v0.1.0`** — release is notes-only at v0.1.0 (binary attachments are scoped to v0.4.0 / task 6.2 per the roadmap).
 
 **Roadmap mapping**: Stage 2 / `v0.1.0`
 **PRD mapping**: Section 12 Week 1 — **Function 1.1 only** (binary entry point). PRD Functions 1.2 (`discover_files`), 1.3 (`hash_file`), 1.4 (`HashStore`) are intentionally deferred to Phase 2 (tasks 2.1 and 2.2) because v0.1.0 ships only the CLI/MCP skeleton — no real indexing yet. Plus brought-forward launch prereqs (CI matrix lite, README, LICENSE — already shipped in Phase 0).

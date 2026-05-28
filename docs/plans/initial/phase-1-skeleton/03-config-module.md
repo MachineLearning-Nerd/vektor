@@ -23,8 +23,8 @@ Precedence (lowest to highest): defaults → file → env vars → CLI args (CLI
 ## Outputs (must exist after completion)
 
 - `src/config.rs` defines `Config` struct with all fields from PRD Section 6.3 TOML schema
-- `Config::load() -> Result<Config>` reads from file + env + falls back to defaults
-- Unit tests covering defaults, file load, env override
+- `Config::load(override_path: Option<PathBuf>) -> crate::error::Result<Config>` reads from `override_path` (or `~/.vektor/config.toml`) + env + falls back to defaults. The `Option<PathBuf>` parameter is required so task 1.4's dispatcher can forward the CLI's global `--config` flag through; a zero-arg signature breaks task 1.4.
+- Unit tests covering defaults, file load with explicit path, missing-override-path errors, env override with double-underscore separator
 
 ## Approach
 

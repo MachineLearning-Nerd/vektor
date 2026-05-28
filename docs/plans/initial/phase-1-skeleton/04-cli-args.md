@@ -162,9 +162,16 @@ cargo build
 ./target/debug/vektor serve --help        # shows --transport
 ./target/debug/vektor models download --help
 
-# Stub exits non-zero with NotImplemented
-./target/debug/vektor index /tmp 2>&1 | grep -q "not implemented"
-[ $? -eq 0 ] || { echo "FAIL: index stub should return NotImplemented"; exit 1; }
+# Stub exits non-zero with NotImplemented.
+# Capture the binary's exit status FIRST (before any pipe — pipe-final-status
+# is grep's status, not vektor's). Then assert both: (a) vektor exited non-zero,
+# (b) its output contained "not implemented". A handler that printed the phrase
+# and returned Ok(()) would slip through a grep-only check.
+OUTPUT=$(./target/debug/vektor index /tmp 2>&1)
+VEKTOR_EXIT=$?
+[ $VEKTOR_EXIT -ne 0 ] || { echo "FAIL: vektor index returned exit 0; should be non-zero for NotImplemented"; exit 1; }
+echo "$OUTPUT" | grep -q "not implemented" || { echo "FAIL: vektor index output missing 'not implemented'"; exit 1; }
+echo "OK: vektor index exited $VEKTOR_EXIT with NotImplemented message"
 ```
 
 ## Notes / open questions

@@ -10,9 +10,9 @@
 
 ## Objective
 
-Replace the trivial `println!("vektor")` from task 0.1 with a real binary entry point: parse CLI args via `clap`, initialize the tokio async runtime, set up tracing, dispatch to the appropriate subcommand. Subcommand bodies are still stubs at this stage — task 1.4 fills them in.
+Replace the trivial `println!("vektor")` from task 0.1 with a real binary **entry-point skeleton**: initialize the tokio async runtime, declare module stubs (`error`, `config`, `cli`), and dispatch to a no-arg `cli::run()` placeholder. **CLI parsing (via `clap`) is deferred to task 1.4. Tracing setup is deferred to task 1.5.** This task creates the structural shell those later tasks fill in; it does not yet do any arg parsing or logging of its own.
 
-The success metric here is "the binary takes args and dispatches structurally," not "any subcommand does anything."
+The success metric here is "main compiles, dispatches to the cli::run stub, and `cargo run` exits 0 without doing anything user-visible" — not "the binary takes args."
 
 ## Inputs (must exist before starting)
 

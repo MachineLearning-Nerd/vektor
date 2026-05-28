@@ -47,12 +47,8 @@ This task establishes the **error contract** that every subsequent module will f
        Mcp(String),
    }
    ```
-2. Make the error type publicly exported by adding `pub mod error;` already done in task 1.1.
-3. Re-export at crate root for convenience:
-   ```rust
-   // In src/main.rs or src/lib.rs (if/when extracted):
-   pub use error::{Result, VektorError};
-   ```
+2. Make the error type publicly exported by adding `pub mod error;` (already done in task 1.1).
+3. **Do NOT re-export `Result` at the crate root.** Task 1.1's `src/main.rs` already does `use anyhow::Result;` for top-level propagation. Adding `pub use error::{Result, VektorError};` in main.rs would collide with the anyhow import (E0252: "the name `Result` is defined multiple times"). The two-layer pattern: library modules refer to `crate::error::Result` explicitly (or `use crate::error::Result;` locally); main keeps `anyhow::Result` for top-level `?`-into-anyhow propagation. If you ever need `VektorError` in main, import it as a single named item: `use crate::error::VektorError;` — that's collision-free.
 4. Verify `cargo check` still passes — no breaking changes to existing code.
 5. Add a unit test that exercises each error variant's `Display` output:
    ```rust
