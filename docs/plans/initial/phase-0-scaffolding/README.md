@@ -14,8 +14,8 @@
 |---|---|---|---|---|
 | 0.1 | [cargo init + Cargo.toml](01-cargo-init.md) | S | ✅ Done | `a3a2c2a` (preceded by spec fixes `93bc389`, `a5d22fd`) |
 | 0.2 | [CI skeleton — GitHub Actions](02-ci-skeleton.md) | M | ⬜ | — |
-| 0.3 | [Pre-commit hooks — rustfmt + clippy](03-pre-commit-hooks.md) | S | ⬜ | — |
-| 0.4 | [cargo-deny supply-chain baseline](04-cargo-deny.md) | S | ⬜ | — |
+| 0.3 | [Pre-commit hooks — rustfmt + clippy](03-pre-commit-hooks.md) | S | ✅ Done | `689d5b2` |
+| 0.4 | [cargo-deny supply-chain baseline](04-cargo-deny.md) | S | ✅ Done | `08361cc` |
 
 ---
 

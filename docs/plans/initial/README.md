@@ -10,7 +10,7 @@ This plan covers **Roadmap Stage 2** only (see [`VEKTOR_ROADMAP.md`](../../../VE
 
 | Phase | Release tag | Status | Notes |
 |---|---|---|---|
-| Phase 0 — Scaffolding | (none — pre-`v0.1.0`) | 🟡 1 of 4 done | Cargo init ✅ (`a3a2c2a`); CI / hooks / deny still to do. |
+| Phase 0 — Scaffolding | (none — pre-`v0.1.0`) | 🟡 3 of 4 done | Cargo init ✅ (`a3a2c2a`); hooks ✅ (`689d5b2`); deny ✅ (`08361cc`); CI (0.2) still pending — needs GitHub remote first. |
 | Phase 1 — Skeleton | `v0.1.0` | ⬜ Not started | Binary entry point, config, error types, no-op MCP handlers, README/LICENSE/tracing wired. |
 | Phase 2 — Discovery + Chunking | `v0.2.0` | ⬜ Not started | File walking, hash store, AST chunker, sliding fallback. |
 | Phase 3 — Embedding + Storage | `v0.3.0` | ⬜ Not started | ONNX/OpenAI/Ollama backends, LanceDB store, secret-aware indexing (B1.2/B1.5). |
@@ -18,7 +18,7 @@ This plan covers **Roadmap Stage 2** only (see [`VEKTOR_ROADMAP.md`](../../../VE
 | Phase 5 — Context Assembly | `v0.4.0` | ⬜ Not started | TokenCounter, Deduplicator, RelatedExpander, QueryCache, ShallowIndexer, RecencyTracker. |
 | Phase 6 — Launch Polish | `v0.4.0` | ⬜ Not started | `vektor init`, signed release pipeline, lightweight benchmark gate, `BENCHMARKS.md` baseline. |
 
-**Active phase**: Phase 0 (in progress — task 0.1 ✅; 0.2 / 0.3 / 0.4 unblocked and ready).
+**Active phase**: Phase 0 (in progress — 0.1 / 0.3 / 0.4 ✅; 0.2 awaits GitHub remote setup).
 
 ---
 

@@ -67,12 +67,16 @@ Each arrow is a hard gate — the next stage does not begin until the previous s
 | A3 — Fix Sec 14 vs Sec 10 metric conflict | ✅ Done (commit `025e522`) |
 | A4 — Expand `.gitignore` | ✅ Done (commit `025e522`) |
 | External review addressed (R1–R6: phase rename, scope reconcile, real-time soften, G3 fix, current-state refresh, crate-name note) | ✅ Done (commit `78ddf9a`) |
-| Re-sequencing (B1.2/B1.5 → Stage 2, C8.1/C8.2 → Stage 2, `vektor init` added, lightweight benchmark gate at v0.4) | ✅ Done (this commit) |
-| `README.md` exists | ✅ Done (this commit) |
-| `LICENSE` exists | ✅ Done (this commit) |
+| Re-sequencing (B1.2/B1.5 → Stage 2, C8.1/C8.2 → Stage 2, `vektor init` added, lightweight benchmark gate at v0.4) | ✅ Done (commit `3d81fa6`) |
+| `README.md` exists | ✅ Done (commit `3d81fa6`) |
+| `LICENSE` exists | ✅ Done (commit `3d81fa6`) |
 | Crate name decision (`vektor` taken on crates.io) | ⏸ Deferred until `cargo publish` |
-| `Cargo.toml` exists in repo | ⬜ Not started (first Stage 2 deliverable) |
-| Any Rust code written | ⬜ Not started |
+| `Cargo.toml` exists in repo | ✅ Done (commit `a3a2c2a`) |
+| `Cargo.lock` + `src/main.rs` + `rust-toolchain.toml` exist | ✅ Done (commit `a3a2c2a`) |
+| Pre-commit hooks configured (task 0.3) | ✅ Done (commit `689d5b2`) |
+| cargo-deny baseline + audit workflow (task 0.4) | ✅ Done (commit `08361cc`) |
+| GitHub Actions CI workflow (task 0.2) | ⏸ Awaits GitHub remote setup |
+| Any Rust code beyond `fn main()` stub | ⬜ Not started (Phase 1 begins after task 0.2) |
 
 ---
 
