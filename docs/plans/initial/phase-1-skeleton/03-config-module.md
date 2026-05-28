@@ -117,28 +117,52 @@ Precedence (lowest to highest): defaults → file → env vars → CLI args (CLI
      ```toml
      [dev-dependencies]
      temp-env = "0.3"
+     tempfile = "3"
      ```
+
+     **Critical — isolate from `~/.vektor/config.toml`.** `Config::load(None)` walks `dirs::home_dir()` to find the default config file. On a developer or CI machine that already has `~/.vektor/config.toml`, the test would pick up unrelated personal settings (or fail on a malformed local config). Override the home-dir lookup by setting `HOME` and `USERPROFILE` to a fresh tempdir for the test's scope:
      ```rust
      #[test]
      fn test_env_override() {
-         temp_env::with_var("VEKTOR__EMBEDDING__BACKEND", Some("ollama"), || {
-             let cfg = Config::load(None).unwrap();
-             assert_eq!(cfg.embedding.backend, "ollama");
-         });
+         let fake_home = tempfile::tempdir().unwrap();
+         temp_env::with_vars(
+             [
+                 // dirs::home_dir() reads $HOME on Unix and %USERPROFILE% on Windows
+                 ("HOME", Some(fake_home.path().to_string_lossy().as_ref())),
+                 ("USERPROFILE", Some(fake_home.path().to_string_lossy().as_ref())),
+                 // The actual override under test
+                 ("VEKTOR__EMBEDDING__BACKEND", Some("ollama")),
+             ],
+             || {
+                 let cfg = Config::load(None).unwrap();
+                 assert_eq!(cfg.embedding.backend, "ollama");
+             },
+         );
+         // fake_home Drop cleans the tempdir automatically
      }
      ```
-   - **Acceptable but riskier**: explicit `unsafe { std::env::set_var(...) }` blocks PLUS `#[serial_test::serial]` (requires `serial_test` dev-dep) to prevent concurrent tests from setting the same var:
+     The empty tempdir has no `.vektor/config.toml`, so `Config::load` falls through to defaults+env. This makes the test **deterministic** regardless of what's in the developer's real `~/.vektor`.
+   - **Acceptable but riskier**: explicit `unsafe { std::env::set_var(...) }` blocks PLUS `#[serial_test::serial]` (requires `serial_test` dev-dep) to prevent concurrent tests from setting the same var. **Even with this approach**, set `HOME`/`USERPROFILE` to a tempdir so the test doesn't read the developer's real `~/.vektor/config.toml`:
      ```rust
      #[test]
      #[serial_test::serial]
      fn test_env_override() {
-         unsafe { std::env::set_var("VEKTOR__EMBEDDING__BACKEND", "ollama"); }
+         let fake_home = tempfile::tempdir().unwrap();
+         unsafe {
+             std::env::set_var("HOME", fake_home.path());
+             std::env::set_var("USERPROFILE", fake_home.path());
+             std::env::set_var("VEKTOR__EMBEDDING__BACKEND", "ollama");
+         }
          let cfg = Config::load(None).unwrap();
-         unsafe { std::env::remove_var("VEKTOR__EMBEDDING__BACKEND"); }
+         unsafe {
+             std::env::remove_var("VEKTOR__EMBEDDING__BACKEND");
+             std::env::remove_var("HOME");
+             std::env::remove_var("USERPROFILE");
+         }
          assert_eq!(cfg.embedding.backend, "ollama");
      }
      ```
-   Pick one approach for v0.1. Do NOT write `std::env::set_var(...)` without `unsafe` — it will not compile on edition 2024.
+   Pick one approach for v0.1 — `temp-env` is preferred. Do NOT write `std::env::set_var(...)` without `unsafe` — it will not compile on edition 2024. And do NOT call `Config::load(None)` in either variant without first isolating `HOME`/`USERPROFILE` — the test becomes non-deterministic on machines with an existing `~/.vektor/config.toml`.
 
 5. The `config` crate v0.15 has API changes from v0.14. Read [docs.rs/config/0.15](https://docs.rs/config/0.15) for current `Config::builder()` and `Environment` API.
 
@@ -158,7 +182,8 @@ Precedence (lowest to highest): defaults → file → env vars → CLI args (CLI
 - [ ] `Config` struct has all 4 sections per PRD Section 6.3: `embedding`, `index`, `watcher`, `server`
 - [ ] Each section has `Default` impl matching PRD-Section-6.3 default values
 - [ ] `Config::load()` follows precedence: defaults → `~/.vektor/config.toml` → `VEKTOR_*` env vars
-- [ ] Missing config file is NOT an error — defaults are used
+- [ ] **Missing _default_ `~/.vektor/config.toml` is NOT an error** — defaults are used. (The default path is a best-effort lookup; absent means "no overrides," not "user mistake.")
+- [ ] **Missing _explicit override_ path IS an error** — when `Config::load(Some(path))` is called with a path that does not exist, return `VektorError::Config(format!("config file not found: {}", path.display()))`. This catches `--config /tmp/typo.toml` rather than silently using defaults. The two cases are distinguished by `let explicit_override = override_path.is_some();` (see the Approach snippet).
 - [ ] Malformed config file IS an error — returns `VektorError::Config`
 - [ ] At least 3 unit tests covering defaults / file / env-override
 - [ ] `cargo test config::tests` passes
