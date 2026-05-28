@@ -35,7 +35,7 @@ This document uses both:
 
 > **Note on phase vs stage**: The PRD uses "Phase 1/2/3" to describe engineering buckets (what gets built in which order). The roadmap uses "Stage 1–6" to describe release timeline. The mapping is many-to-many — PRD Phase 1 spans roadmap Stages 2 and 3; PRD Phase 2 splits between Stages 4 (watcher + dep graph) and 5 (git history); PRD Phase 3 splits between Stages 3 (benchmarks/C1) and 6 (LSP + extended langs). Always state which you mean.
 
-> **Known issue — crate name `vektor` is taken on crates.io** (`vektor = "0.2.2"`, a SIMD crate). Deferred per current decision; must be resolved before `cargo publish` of `v0.1.0`. Candidates: `vektorctx`, `vektor-mcp`, `kontxt`, or a clean rename. All docs continue to use `vektor` until renamed.
+> **Known issue — crate name `vektor` is taken on crates.io** (`vektor = "0.2.2"`, a SIMD crate). Deferred per current decision; must be resolved before any crates.io publish. The `v0.1.0` milestone is a Git tag + GitHub Release notes milestone and uses `cargo install --git ... --tag v0.1.0`, so it is not blocked by the crate-name decision. Candidates: `vektorctx`, `vektor-mcp`, `kontxt`, or a clean rename. All docs continue to use `vektor` until renamed.
 
 **Semver discipline**: while in `v0.x`, any minor bump may break. From `v1.0` onward, follow strict semver — breaking changes only on major bumps.
 
@@ -137,8 +137,8 @@ Follows PRD Section 12 weekly breakdown. Cargo releases tag at natural completio
 
 | Sub-stage | Release | What ships (core engine) | What ships (launch prereqs — see brought-forward table) | PRD ref |
 |---|---|---|---|---|
-| Skeleton | `v0.1.0` | `cargo build` succeeds, CLI parses `vektor index` and `vektor serve`, no-op handlers respond to MCP | README.md, LICENSE, basic GitHub Actions CI (build+test on macOS+Linux) | Week 1, Function 1.1–1.4 |
-| AST chunker | `v0.2.0` | Tree-sitter chunking for 5 languages + sliding-window fallback. Output verified via `vektor index --dump-chunks` | — | Week 2, Function 2.1–2.5 |
+| Skeleton | `v0.1.0` | `cargo build` succeeds, CLI parses `vektor index` and `vektor serve`, no-op handlers respond to MCP | README.md, LICENSE, basic GitHub Actions CI (build+test on macOS+Linux) | Week 1 — **Function 1.1 only** (binary entry point). PRD Functions 1.2 (`discover_files`), 1.3 (`hash_file`), 1.4 (`HashStore`) defer to `v0.2.0` (tasks 2.1 + 2.2). |
+| AST chunker | `v0.2.0` | Tree-sitter chunking for 5 languages + sliding-window fallback. Output verified via `vektor index --dump-chunks` | — | Week 1 Functions 1.2–1.4 (`discover_files`, `hash_file`, `HashStore`) brought forward from `v0.1.0` per the phase-1 scope cut + Week 2 Functions 2.1–2.5 (chunker proper) |
 | Embed + vector store | `v0.3.0` | OnnxEmbedder loads Jina v2, embeds chunks, stores in LanceDB. `vektor index` produces a queryable LanceDB table | `SecretDetector` skips secrets during indexing (B1.2) | Week 3, Function 3.1–3.9 |
 | BM25 + hybrid search + MCP | `v0.4.0` | Tantivy BM25 + RRF fusion + MCP server bootstrap + 3 primary tool handlers (`index_codebase`, `search_code`, `get_context_for_prompt`) | `vektor init` MCP config writer, release artifacts (binaries + checksums) for macOS+Linux, lightweight benchmark gate (≥20 queries against tokio) → BENCHMARKS.md v0.1 | Week 4–6, Function 4.1–4.8 + CA.1–CA.6 |
 
@@ -151,19 +151,19 @@ Runs in parallel with the engine work (no dependency on engine internals):
 | B6.1 | `vektor models download [--lite]` subcommand | Idempotent download of Jina v2 (default) or bge-small (`--lite`) to `~/.vektor/models/`. Resumable on partial failure. Progress bar via `indicatif`. |
 | B6.2 | `--model-path` flag | Overrides `~/.vektor/models/` to a user-specified directory. Supports airgapped environments. |
 | B6.3 | `VEKTOR_MODELS_DIR` env var | Same as `--model-path` but via env (Docker/CI use). |
-| B6.4 | Release tarball strategy | GitHub Release assets include `vektor-<platform>-with-jina-v2.tar.gz` (binary + model, ~330MB) and `vektor-<platform>.tar.gz` (binary only, ~30MB). `cargo install vektor` users get the binary and run `vektor models download` on first launch. |
+| B6.4 | Release tarball strategy | GitHub Release assets include `vektor-<platform>-with-jina-v2.tar.gz` (binary + model, ~330MB) and `vektor-<platform>.tar.gz` (binary only, ~30MB). Crates.io install users get the binary after the final crate name is chosen, then run `vektor models download` on first launch. |
 | B6.5 | Mirror fallback for HF | If HuggingFace download returns 429/timeout, fall back to a list of mirrors (CDN, ModelScope, etc.). Config in `~/.vektor/config.toml`. |
 
 ### Deliverables — Brought forward from external review (2026-05-27)
 
-The reviewer correctly argued that secret handling, MCP server registration, prebuilt binaries, benchmark proof, and README/LICENSE are *launch prerequisites*, not v1.0 nice-to-haves. They join Stage 2:
+The reviewer correctly argued that secret handling, MCP server registration, prebuilt binaries, benchmark proof, and README/LICENSE are *launch prerequisites*, not v1.0 nice-to-haves. They join Stage 2, with source-install docs at `v0.1.0` and prebuilt binaries at `v0.4.0`:
 
 | # | Item | Ships in | What it produces |
 |---|---|---|---|
 | **B1.2** | `SecretDetector` module (moved from Stage 4) | `v0.3.0` | Static gitleaks-style rules + Shannon-entropy check. Chunks containing matches are skipped before embedding, logged as warnings, and surfaced in `index_codebase` response metadata. Inexpensive (~50 regexes, ~5ms per file). The full PRD Section 4.11 doc + audit subcommand (B1.1/B1.3/B1.4) still ship at Stage 4 — this is the *behavior*, not the *governance*. |
 | **B1.5** | `.env*`, `*.pem`, `*.key`, `credentials.json` file-level skip list | `v0.3.0` | Hardcoded skip list in the file discovery path. Doesn't even read these files into memory. |
 | **L1** | `vektor init` MCP config writer | `v0.4.0` | Subcommand that detects installed agents (Claude Code via `~/.claude.json`, Cursor via `~/.cursor/mcp.json`, Codex via `~/.codex/config.toml`) and writes the appropriate MCP server entry. Reviewer's point: "Skills teach agents *when* to call Vektor; they don't register the server." Without `vektor init`, "zero-config" is a half-truth. |
-| **L2** | README.md | `v0.1.0` | Project pitch, current state, install path (cargo + prebuilt), quickstart (3 commands max), links to PRD/ROADMAP, license. Written before any non-skeleton code so the project has a public face from day one. |
+| **L2** | README.md | `v0.1.0` | Project pitch, current state, source install path (`cargo install --git ... --tag v0.1.0`), quickstart (3 commands max), links to PRD/ROADMAP, license. Prebuilt binary install docs are added at `v0.4.0` with the release-artifacts pipeline. |
 | **L3** | LICENSE (MIT) | `v0.1.0` | The license already declared in PRD Section 1 + `Cargo.toml`. Shipping the actual file matters for `cargo publish` and for OSS-tooling correctness. |
 | **C8.1** | GitHub Actions CI matrix (moved from Stage 6) | `v0.1.0` (lite) → `v0.4.0` (full) | At `v0.1.0`: build + test on macOS-aarch64 and linux-x86_64. At `v0.4.0`: full matrix adds macOS-x86_64, linux-aarch64, windows-x86_64. Reviewer's point: "most target users need prebuilt binaries; defaulting to Cargo + 300MB model + Rust 1.88 toolchain is friction." |
 | **C8.2** | Release artifacts pipeline (moved from Stage 6) | `v0.4.0` | GitHub Release on tag push: signed binaries + SHA-256 checksums for each platform in the matrix, plus the `--with-jina-v2` tarballs from B6.4. Homebrew tap, AUR, deb/rpm stay at Stage 6 (`C8.3`). |
@@ -176,7 +176,7 @@ The full versions of items B1, C8, and C1 still live in their original stages (S
 **Core engine:**
 - [ ] `vektor index /some/repo` completes without errors on at least 3 real repos (FastAPI source, tokio, a small TypeScript project)
 - [ ] `vektor serve` registers `index_codebase`, `search_code`, `get_context_for_prompt` with Claude Code via MCP and they all return correct JSON
-- [ ] `cargo install vektor && vektor models download` works end-to-end on a fresh macOS install
+- [ ] Documented install path works end-to-end on a fresh macOS install (`cargo install --git ... --tag ...` until the crates.io name is resolved; crates.io install after rename/publish)
 - [ ] Test coverage > 70% on the chunker, embedder, and search modules (`cargo tarpaulin` or equivalent)
 - [ ] No `unwrap()` calls outside `#[cfg(test)]` blocks (per PRD Section 15 Implementation Rules)
 - [ ] All Section 14 "Phase 1 Must Have" criteria pass for the 3 tools shipped (the other 5 workflow tools are explicitly deferred to Stage 3)
@@ -191,7 +191,7 @@ The full versions of items B1, C8, and C1 still live in their original stages (S
 
 ### Open decisions
 
-- **D2.1** — Should `cargo install vektor` auto-trigger `vektor models download` on first MCP server start? Reduces friction; adds 5-minute first-run latency. *Recommendation: prompt-then-download with `--auto-download` to skip the prompt.*
+- **D2.1** — Should crates.io install auto-trigger `vektor models download` on first MCP server start after the final crate name is chosen? Reduces friction; adds 5-minute first-run latency. *Recommendation: prompt-then-download with `--auto-download` to skip the prompt.*
 - **D2.2** — Bundle model in the cargo crate itself (makes `cargo install` download 330MB) or strictly via GitHub releases (cargo users always need a second step)? *Recommendation: GitHub releases only; cargo crate stays lean.*
 - **D2.3** — Which 3 reference repos for the exit criteria? *Recommendation: FastAPI (Python, ~700 files), tokio (Rust, ~400 files), a small TypeScript repo TBD.*
 - **D2.4** — Which secret-detection rule set for B1.2? *Recommendation: a curated subset (~50 rules) from [gitleaks](https://github.com/gitleaks/gitleaks)' default config, vendored as a static `secret_rules.toml`. Updating the rule set ships with each Vektor release; users don't need to fetch rules separately.*
@@ -398,7 +398,7 @@ Turn Vektor from a tool into a platform. Each item below is a deliverable indepe
 
 ### Deliverables — C8: CI/CD Matrix (packaging surfaces; core CI already shipped at v0.4)
 
-> **Note (2026-05-27):** Basic CI matrix (C8.1) and release artifacts (C8.2) were pulled forward into Stage 2 per external review — prebuilt binaries exist from `v0.1.0`, signed release artifacts from `v0.4.0`. What stays here is the *packaging-channel* expansion (Homebrew/AUR/deb/rpm) and the regression-gate hooks that depend on benchmark/calibration infrastructure built in earlier stages.
+> **Note (2026-05-27):** Basic CI matrix (C8.1) and release artifacts (C8.2) were pulled forward into Stage 2 per external review. At `v0.1.0`, CI proves source builds and the release is notes-only. Signed downloadable binaries start at `v0.4.0`. What stays here is the *packaging-channel* expansion (Homebrew/AUR/deb/rpm) and the regression-gate hooks that depend on benchmark/calibration infrastructure built in earlier stages.
 
 | # | Item | Effort |
 |---|---|---|

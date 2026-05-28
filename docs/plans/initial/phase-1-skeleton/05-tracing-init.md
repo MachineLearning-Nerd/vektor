@@ -15,7 +15,7 @@ Initialize structured logging via `tracing` + `tracing-subscriber`. The `--verbo
 ## Inputs (must exist before starting)
 
 - `Cli::verbose` field from task 1.4 (count of `-v` flags)
-- `Cargo.toml` declares `tracing = "0.1"` and `tracing-subscriber = { features = ["env-filter"] }`
+- `Cargo.toml` declares `tracing = "0.1"` and `tracing-subscriber = { features = ["env-filter", "json"] }`
 
 ## Outputs (must exist after completion)
 
@@ -24,7 +24,7 @@ Initialize structured logging via `tracing` + `tracing-subscriber`. The `--verbo
 
 ## Approach
 
-0. **Cargo.toml prerequisite**: ensure `tracing-subscriber` has both `env-filter` AND `json` features. The committed `Cargo.toml` from task 0.1 declares only `env-filter`. `fmt::layer().json()` (used below) is gated behind the `json` feature — without it the code below produces `error[E0599]: no method named "json" found for struct Layer`. Update the line in `Cargo.toml`:
+0. **Cargo.toml prerequisite**: ensure `tracing-subscriber` has both `env-filter` AND `json` features. `fmt::layer().json()` (used below) is gated behind the `json` feature — without it the code below produces `error[E0599]: no method named "json" found for struct Layer`. If the `json` feature is missing, update the line in `Cargo.toml`:
    ```toml
    tracing-subscriber = { version = "0.3", features = ["env-filter", "json"] }
    ```

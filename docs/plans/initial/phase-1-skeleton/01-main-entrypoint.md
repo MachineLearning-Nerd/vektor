@@ -22,7 +22,7 @@ The success metric here is "main compiles, dispatches to the cli::run stub, and 
 
 ## Outputs (must exist after completion)
 
-- `src/main.rs` — entry point with `#[tokio::main]`, structured arg parsing, error handling via `anyhow::Result`
+- `src/main.rs` — entry point with `#[tokio::main]` and error handling via `anyhow::Result`; structured arg parsing is added in task 1.4
 - Empty module declarations referenced from main (e.g., `mod config; mod error; mod cli;`) so subsequent tasks can fill them in
 
 ## Approach
@@ -54,17 +54,16 @@ The success metric here is "main compiles, dispatches to the cli::run stub, and 
    EOF
    ```
    Doc comments are not "items" so clippy never flags them.
-3. `src/cli.rs` is special — main calls into it, so it must define at least the symbol main references. Add a temporary, deliberately-`unused`-allowed stub:
+3. `src/cli.rs` is special — main calls into it, so it must define the symbol main references. Add a temporary stub:
    ```rust
    //! Vektor CLI. Populated by task 1.4.
 
-   #[allow(dead_code)]
    pub async fn run() -> anyhow::Result<()> {
        Ok(())
    }
    ```
-   `#[allow(dead_code)]` on the function is acceptable because the call site exists in main.rs (so it's reachable), but clippy can briefly disagree during partial compilation. Remove the attribute in task 1.4 once `run()` does real work.
-4. Run `cargo check` and `cargo clippy -- -D warnings`. Both must pass.
+   Because `main.rs` calls this function, it is not dead code and does not need an `#[allow(dead_code)]` attribute.
+4. Run `cargo check` and `cargo clippy --all-targets -- -D warnings`. Both must pass.
 5. Run the binary: `cargo run -- --help`. It should exit 0 (no help text yet; that arrives with clap in task 1.4).
 
 ## Acceptance criteria
@@ -93,7 +92,7 @@ grep -c "unwrap()" src/main.rs  # expect 0
 ## Notes / open questions
 
 - **Why tokio's `#[tokio::main]` macro vs manual runtime construction?** The macro is fine for a binary's main. We never need to share the runtime with FFI or embed it elsewhere. Keep it simple.
-- **Module stubs**: leaving `src/cli.rs` etc. truly empty makes Rust complain about "file not found" if `mod cli;` is declared without the file. The minimal placeholder fn keeps compilation clean.
+- **Module stubs**: empty `src/error.rs` and `src/config.rs` are valid because `mod error;` and `mod config;` only require the files to exist. `src/cli.rs` needs the temporary `run()` function because `main.rs` calls it in this task.
 - **`anyhow::Result` vs custom error type**: anyhow is fine at the top level. Custom error types via `thiserror` arrive in task 1.2 and are used by library code, not main.
 - **Don't add real subcommand dispatch here**: that's task 1.4's job. Resist the temptation to "do it all in one task" — the dependency graph requires 1.1 → 1.2 → 1.3 → 1.4 sequencing because each task introduces concepts the next builds on.
 

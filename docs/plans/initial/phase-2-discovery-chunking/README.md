@@ -38,7 +38,7 @@ All must be true before tagging `v0.2.0`:
 - [ ] Content-addressed chunk IDs: chunking the same file twice produces identical IDs (test via `cargo test`)
 - [ ] `.gitignore` honored: a deliberately-ignored file (added to `.gitignore` in the test repo) is not in the output of `discover_files`
 - [ ] HashStore persists to `~/.vektor/<project>/state.db`; running `vektor index` twice on an unchanged repo produces "0 files changed" output
-- [ ] CI matrix green; tag pushed; release artifacts uploaded
+- [ ] CI matrix green; tag pushed; GitHub Release notes published. Binary release artifacts are still deferred to v0.4.0 / task 6.2.
 - [ ] Per-task files for Phase 3 written before phase 3 work starts (task 2.9 closes the expansion)
 
 ---

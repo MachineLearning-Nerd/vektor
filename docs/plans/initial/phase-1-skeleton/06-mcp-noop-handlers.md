@@ -148,22 +148,26 @@ This is the **longest task in Phase 1**. Read rmcp 1.7's docs.rs page before sta
 ## Verification
 
 ```bash
-# Spawn server and send a manual request
+# Spawn server with isolated HOME/USERPROFILE and send a manual request
+FAKE_HOME=$(mktemp -d)
 {
   echo '{"jsonrpc":"2.0","id":1,"method":"initialize","params":{"protocolVersion":"2024-11-05","capabilities":{},"clientInfo":{"name":"manual-test","version":"0.1.0"}}}'
   sleep 0.1
   echo '{"jsonrpc":"2.0","id":2,"method":"tools/list"}'
   sleep 0.1
-} | ./target/debug/vektor serve --transport stdio | head -3
+} | HOME="$FAKE_HOME" USERPROFILE="$FAKE_HOME" ./target/debug/vektor serve --transport stdio | head -3
+rm -rf "$FAKE_HOME"
 
 # Integration test
 cargo test --test mcp_serve
 
 # Stdout cleanliness
-./target/debug/vektor -vvv serve > /tmp/stdout.txt 2> /tmp/stderr.txt &
+FAKE_HOME=$(mktemp -d)
+HOME="$FAKE_HOME" USERPROFILE="$FAKE_HOME" ./target/debug/vektor -vvv serve > /tmp/stdout.txt 2> /tmp/stderr.txt &
 PID=$!
 sleep 1
 kill $PID
+rm -rf "$FAKE_HOME"
 # stdout should be empty (no requests sent yet); stderr should have log noise
 [ -s /tmp/stdout.txt ] && echo "FAIL: stdout had data without a request" || echo "OK"
 [ -s /tmp/stderr.txt ] && echo "OK: stderr has logs"
@@ -187,7 +191,7 @@ feat(mcp): 1.6 — rmcp 1.7 stdio server with 3 no-op tool handlers
 Implements vektor serve over stdio. Registers index_codebase,
 search_code, and get_context_for_prompt with handlers that return
 {"status": "not implemented yet", "phase": "..."} JSON. tools/list
-returns proper schemas matching PRD Section 9. Unknown tool names
+returns input schemas matching PRD Section 9 request shapes. Unknown tool names
 get proper MCP error responses instead of crashing.
 
 Integration test in tests/mcp_serve.rs spawns the binary, sends

@@ -2,7 +2,7 @@
 
 **Phase**: 1 — Skeleton
 **Task ID**: 1.3
-**PRD reference**: Section 6.3 (Configuration TOML schema), Section 9 (env override convention `VEKTOR_*`)
+**PRD reference**: Section 6.3 (Configuration TOML schema), Section 9 (env override convention `VEKTOR__SECTION__KEY` within the `VEKTOR_*` namespace)
 **Roadmap stage**: Stage 2 / `v0.1.0`
 **Effort estimate**: M (1–4h)
 **Depends on**: 1.2
@@ -10,7 +10,7 @@
 
 ## Objective
 
-Define the `Config` struct that mirrors the TOML schema in PRD Section 6.3, load it from `~/.vektor/config.toml` if present (or use defaults), and apply environment-variable overrides per the `VEKTOR_*` convention.
+Define the `Config` struct that mirrors the TOML schema in PRD Section 6.3, load it from `~/.vektor/config.toml` if present (or use defaults), and apply environment-variable overrides per the `VEKTOR__SECTION__KEY` convention.
 
 Precedence (lowest to highest): defaults → file → env vars → CLI args (CLI overrides applied in task 1.4).
 
@@ -187,7 +187,7 @@ Precedence (lowest to highest): defaults → file → env vars → CLI args (CLI
 
 - [ ] `Config` struct has all 4 sections per PRD Section 6.3: `embedding`, `index`, `watcher`, `server`
 - [ ] Each section has `Default` impl matching PRD-Section-6.3 default values
-- [ ] `Config::load()` follows precedence: defaults → `~/.vektor/config.toml` → `VEKTOR_*` env vars
+- [ ] `Config::load(override_path: Option<PathBuf>)` follows precedence: defaults → `~/.vektor/config.toml` or explicit override path → `VEKTOR__*` env vars
 - [ ] **Missing _default_ `~/.vektor/config.toml` is NOT an error** — defaults are used. (The default path is a best-effort lookup; absent means "no overrides," not "user mistake.")
 - [ ] **Missing _explicit override_ path IS an error** — when `Config::load(Some(path))` is called with a path that does not exist, return `VektorError::Config(format!("config file not found: {}", path.display()))`. This catches `--config /tmp/typo.toml` rather than silently using defaults. The two cases are distinguished by `let explicit_override = override_path.is_some();` (see the Approach snippet).
 - [ ] Malformed config file IS an error — returns `VektorError::Config`
@@ -198,7 +198,7 @@ Precedence (lowest to highest): defaults → file → env vars → CLI args (CLI
 
 ```bash
 cargo test config::tests
-cargo clippy -- -D warnings
+cargo clippy --all-targets -- -D warnings
 
 # Sanity: print default config as TOML
 cargo run --example print_default_config 2>/dev/null || echo "no example yet — fine"
@@ -212,7 +212,7 @@ VEKTOR__EMBEDDING__BACKEND=ollama cargo test config::tests::test_env_override
 - **`config` crate vs hand-rolled**: the `config` crate handles defaults + file + env merging with proper precedence. Hand-rolling this is a footgun (most "simple" implementations forget about case-conversion for env vars). Stick with the crate.
 - **`figment` alternative**: figment is also good. We standardize on `config` because it's already in PRD Section 11. Don't introduce a new dep.
 - **Env var separator**: `VEKTOR__EMBEDDING__BACKEND` → `embedding.backend`. Both `prefix_separator` AND `separator` are double underscore. With `prefix_separator("__")` the full `VEKTOR__` is stripped cleanly; with single underscore `prefix_separator("_")` only `VEKTOR_` is stripped, leaving `_EMBEDDING__BACKEND` which mis-maps to `_embedding.backend` (no leading-underscore section exists in the schema, so the override silently no-ops). Compound key names like `openai_api_key` survive because the SECTION separator is `__`, distinct from the single underscore inside the key name itself. The `config` crate API for this has churned between versions — verify against [docs.rs/config/0.15](https://docs.rs/config/0.15) before tweaking.
-- **Don't load on every call**: `Config::load()` should be called once in main (task 1.4) and the result passed around. Caching globally via `OnceCell` is unnecessary at v0.1.0.
+- **Don't load on every call**: `Config::load(override_path)` should be called once in main/dispatch (task 1.4) and the result passed around. Caching globally via `OnceCell` is unnecessary at v0.1.0.
 - **Path expansion**: `dirs::home_dir()` returns the OS-conventional home. Don't manually expand `~`. Don't read `$HOME` directly.
 
 ## Commit
@@ -221,10 +221,11 @@ VEKTOR__EMBEDDING__BACKEND=ollama cargo test config::tests::test_env_override
 feat(config): 1.3 — TOML config + env-var override via config crate
 
 Mirrors PRD Section 6.3 TOML schema as Rust structs with serde
-derive + Default impls. Config::load() merges defaults → ~/.vektor/
-config.toml (optional) → VEKTOR_* env vars with snake-case
-conversion. Missing config file uses defaults; malformed file
-returns VektorError::Config.
+derive + Default impls. Config::load(override_path) merges defaults →
+~/.vektor/config.toml or explicit override path → VEKTOR__* env vars
+with snake-case conversion. Missing default config uses defaults;
+missing explicit override path or malformed file returns
+VektorError::Config.
 
 3 unit tests: defaults match PRD, file load, env override.
 

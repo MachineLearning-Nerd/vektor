@@ -81,14 +81,22 @@ Workflow tools (`get_context_for_task` etc.) ship in Stage 3 (`v0.5.0` → `v0.9
 
 ## Install (planned, not yet available)
 
-Once `v0.1.0` ships, install paths will be:
+At `v0.1.0`, the supported install path will be source install from the Git tag:
 
 ```bash
-# Prebuilt binary (planned recommended path — needs Stage 2 CI)
+# Prerequisites: Rust 1.91+ and protoc
+cargo install --git https://github.com/MachineLearning-Nerd/vektor --tag v0.1.0
+vektor --help
+```
+
+Prebuilt binaries, `vektor init`, and model download UX are planned for the `v0.4.0` launch milestone:
+
+```bash
+# Prebuilt binary (planned for v0.4.0)
 curl -fsSL https://install.vektor.dev | sh
 
-# Cargo (planned — needs final crate name; see Known Issue below)
-cargo install vektor
+# Cargo/crates.io install after the final crate name is resolved
+cargo install <final-crate-name>
 
 # Then register with your agent
 vektor init       # auto-detects Claude Code, Cursor, Codex CLI
@@ -98,13 +106,13 @@ vektor models download    # one-time ~300MB download of Jina v2
 vektor index /path/to/repo
 ```
 
-None of these work yet. They describe the intended UX for `v0.4.0`.
+None of these work yet. The first block describes the intended `v0.1.0` source-install path; the second block describes the intended UX for `v0.4.0`.
 
 ---
 
 ## Known issues / open decisions
 
-- **Crate name `vektor` is already published on crates.io** (a SIMD utility crate). A rename is required before `cargo publish` of `v0.1.0`. Candidates under discussion: `vektorctx`, `vektor-mcp`, or a clean rename. See [VEKTOR_ROADMAP.md](VEKTOR_ROADMAP.md) Known Issue note.
+- **Crate name `vektor` is already published on crates.io** (a SIMD utility crate). A rename is required before any crates.io publish. The `v0.1.0` milestone uses a Git tag install path and is not blocked by this decision. Candidates under discussion: `vektorctx`, `vektor-mcp`, or a clean rename. See [VEKTOR_ROADMAP.md](VEKTOR_ROADMAP.md) Known Issue note.
 - **Single maintainer** (solo project). Issues and PRs welcome, but expect slower turnaround than a multi-maintainer project.
 - **No timeline commitment.** Quality before speed. The roadmap describes staging, not delivery dates.
 

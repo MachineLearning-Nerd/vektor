@@ -19,7 +19,7 @@
 | 1.4 | [CLI args — clap derive subcommands](04-cli-args.md) | M | 1.1, 1.3 | ⬜ | — |
 | 1.5 | [tracing init](05-tracing-init.md) | S | 1.4 | ⬜ | — |
 | 1.6 | [MCP no-op handlers — rmcp 1.7](06-mcp-noop-handlers.md) | L | 1.5 | ⬜ | — |
-| 1.7 | [v0.1.0 release tag + artifacts](07-v0.1.0-release.md) | M | 0.2, 0.4, 1.6 | ⬜ | — |
+| 1.7 | [v0.1.0 release tag + notes](07-v0.1.0-release.md) | M | 0.2, 0.4, 1.6 | ⬜ | — |
 
 ---
 
@@ -32,7 +32,7 @@ All must be true before tagging `v0.1.0`:
 - [ ] `vektor serve` starts an MCP server over stdio, accepts a `tools/list` request, and returns the planned tool names (handlers are no-op — they return `{ "status": "not implemented yet" }`)
 - [ ] `vektor index /some/path` parses arguments and exits with a "not implemented" message (does not crash, does not silently succeed)
 - [ ] `vektor models download` parses arguments and exits with a "not implemented" message
-- [ ] CI green on macOS-latest + ubuntu-latest with `cargo fmt --check`, `cargo clippy -- -D warnings`, `cargo test`, `cargo doc`
+- [ ] CI green on macOS-latest + ubuntu-latest with `cargo fmt --check`, `cargo clippy --workspace --all-targets -- -D warnings`, `cargo test`, `cargo doc`
 - [ ] `gh release create v0.1.0` creates a notes-only GitHub Release (zero binary attachments at v0.1.0 per the roadmap; binaries land at v0.4.0 / task 6.2)
 - [ ] `cargo install --git https://github.com/MachineLearning-Nerd/vektor --tag v0.1.0` succeeds on a fresh machine
 - [ ] `README.md` walks a fresh user from `cargo install --git ... --tag v0.1.0` (the source-install path; v0.1.0 ships no binary attachments per task 1.7 / roadmap) through to `vektor --help` in 3 commands, with the `protoc` prerequisite called out before the install command
