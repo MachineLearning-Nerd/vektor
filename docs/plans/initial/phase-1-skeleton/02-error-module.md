@@ -49,21 +49,28 @@ This task establishes the **error contract** that every subsequent module will f
    ```
 2. **Module visibility**: task 1.1's `src/main.rs` declares `mod error;` (private). That's correct for a binary crate — `pub mod` is only meaningful when something outside the crate consumes the module. Do NOT change to `pub mod`; it adds no value and is its own clippy nit. What matters for dead_code is that something in the crate **uses** `VektorError`/`Result` — see step below about the clippy gate.
 3. **Do NOT re-export `Result` at the crate root.** Task 1.1's `src/main.rs` already does `use anyhow::Result;` for top-level propagation. Adding `pub use error::{Result, VektorError};` in main.rs would collide with the anyhow import (E0252: "the name `Result` is defined multiple times"). The two-layer pattern: library modules refer to `crate::error::Result` explicitly (or `use crate::error::Result;` locally); main keeps `anyhow::Result` for top-level `?`-into-anyhow propagation. If you ever need `VektorError` in main, import it as a single named item: `use crate::error::VektorError;` — that's collision-free.
-4. **Add a placeholder use in `src/main.rs`** so the bin target's dead_code analyzer sees `VektorError` and `Result` as used. Without this, `cargo clippy --all-targets -- -D warnings` fails on the bin target even with all the unit tests in step 5 (test-target references don't propagate to bin-target dead_code analysis). The placeholder is a single line in main:
+4. **Add a placeholder use in `src/main.rs` that constructs EVERY VektorError variant** so the bin target's dead_code analyzer sees them all as constructible. Rust's `dead_code` lint analyzes enum variants **individually** — `let _x: Result<()> = Ok(())` only references the `Result` alias, not any `VektorError` variant, so `Config`, `NotImplemented`, and `Mcp` still trip dead_code on the bin target. `Io` is fine because `#[from] std::io::Error` generates a `From` impl that counts as a construction path. The placeholder must explicitly construct the other three:
    ```rust
    // src/main.rs — between mod declarations and #[tokio::main]
    #[tokio::main]
    async fn main() -> anyhow::Result<()> {
-       // task 1.2 placeholder use — bin target dead_code analyzer needs to see
-       // VektorError and Result as referenced. Task 1.3 replaces this line with
-       // `let _config = config::Config::load(None)?;` which propagates VektorError
-       // naturally via the ? operator.
-       let _placeholder: error::Result<()> = Ok(());
+       // task 1.2 placeholder — construct every VektorError variant so the
+       // bin target's dead_code analyzer sees them as live. By task 1.4
+       // (CLI dispatch), every variant has a real consumer: Config in
+       // Config::load, NotImplemented in cli::run's match arms, Io via ?
+       // on file ops, Mcp in the mcp module (task 1.6). Remove this block
+       // once that's in place.
+       let _placeholder_variants = (
+           error::VektorError::Config(String::new()),
+           error::VektorError::NotImplemented("task 1.2 placeholder"),
+           error::VektorError::Mcp(String::new()),
+       );
+       let _placeholder_alias: error::Result<()> = Ok(());
 
        cli::run().await
    }
    ```
-   This pattern matches the round-3 fix that introduced the `Config::load(None)` placeholder for the same dead_code reason. Both placeholders disappear by task 1.4 when CLI dispatch starts genuinely consuming `VektorError`.
+   The tuple is bound to `_placeholder_variants` (leading underscore silences `unused_variables` while the constructions still count as "uses" for dead_code). Same pattern philosophy as the round-3 fix for `Config::load(None)`, but tuned to enum-variant semantics rather than function-name semantics. Both placeholder blocks disappear by task 1.4 when CLI dispatch starts genuinely consuming the variants.
 
 5. Verify `cargo check` still passes — no breaking changes to existing code.
 6. Add unit tests that exercise each error variant's `Display` output and reference the `Result<T>` alias. (Note: tests alone are NOT sufficient for the bin-target clippy gate — see step 4's main.rs placeholder. Tests cover the test-target dead_code analysis; the placeholder covers the bin-target.)
@@ -100,11 +107,7 @@ This task establishes the **error contract** that every subsequent module will f
 - [ ] At least 2 unit tests exercising `Display` output, plus 1 unit test referencing the `Result<T>` alias
 - [ ] `cargo test --workspace` passes
 - [ ] `cargo clippy --all-targets -- -D warnings` clean. **`--all-targets` runs clippy on each target separately** — the bin target and the test target each get their own dead_code pass. Tests-only references DO NOT silence dead_code in the bin target. To prevent the bin target from flagging `VektorError` and `Result`, task 1.2 ALSO updates `src/main.rs` with a placeholder use (see Approach step below). Same pattern as the `Config::load(None)` placeholder added in task 1.3.
-- [ ] `src/main.rs` contains a placeholder use of `VektorError`/`Result` until task 1.3's `Config::load` propagation replaces it. Suggested form:
-  ```rust
-  // task 1.2 placeholder — task 1.3 replaces this with Config::load(None)? which propagates VektorError naturally
-  let _placeholder: error::Result<()> = Ok(());
-  ```
+- [ ] `src/main.rs` contains placeholder constructions of EVERY non-`#[from]` `VektorError` variant (`Config`, `NotImplemented`, `Mcp`) plus a reference to the `Result<T>` alias. `Io` is auto-counted via `#[from] std::io::Error`. See Approach step 4 for the canonical placeholder block. Without these per-variant constructions, the bin target's dead_code analyzer flags each unconstructed variant individually — they do NOT count as "used" just because the enum type is referenced.
 
 ## Verification
 
