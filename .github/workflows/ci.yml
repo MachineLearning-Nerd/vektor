@@ -1,0 +1,64 @@
+name: CI
+
+# Build + lint + test gate for every push to main and every PR targeting main.
+#
+# Lite matrix (v0.1.0): macOS-aarch64 + linux-x86_64.
+# Full 5-platform matrix lands in task 6.2 with the release pipeline (adds
+# macOS-x86_64, linux-aarch64, windows-x86_64).
+#
+# Pre-commit hooks (task 0.3) run the same checks locally; CI is the source
+# of truth for pass/fail. cargo-deny (task 0.4) runs in a separate workflow
+# (.github/workflows/audit.yml) on Cargo.toml/Cargo.lock/deny.toml changes.
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+# Cancel an in-flight run when a newer commit lands on the same ref.
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+# Read-only repo permissions. The build action doesn't need write.
+permissions:
+  contents: read
+
+jobs:
+  build:
+    name: build
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 30
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [macos-latest, ubuntu-latest]
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      # rust-toolchain.toml pins channel 1.91.0 with rustfmt+clippy.
+      # The dtolnay action respects rust-toolchain.toml automatically when
+      # no `toolchain:` input is supplied.
+      - name: Install Rust
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          components: rustfmt, clippy
+
+      - name: Cache Cargo deps
+        uses: Swatinem/rust-cache@v2
+
+      - name: cargo fmt --check
+        run: cargo fmt --check
+
+      - name: cargo clippy
+        run: cargo clippy --workspace --all-targets -- -D warnings
+
+      - name: cargo test
+        run: cargo test --workspace
+
+      - name: cargo doc (no-deps)
+        run: cargo doc --workspace --no-deps
+        env:
+          RUSTDOCFLAGS: "-D warnings"
