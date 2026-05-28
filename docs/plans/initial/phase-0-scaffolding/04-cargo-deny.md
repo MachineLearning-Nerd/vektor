@@ -28,15 +28,38 @@ Strict enforcement (failing CI on new advisories) lands in task 6.2 with the rel
 ## Approach
 
 1. Install cargo-deny locally: `cargo install cargo-deny`
-2. Run `cargo deny init` to generate a starter `deny.toml`. Review and edit:
-   - `[licenses]`: allow `MIT`, `Apache-2.0`, `Apache-2.0 WITH LLVM-exception`, `BSD-2-Clause`, `BSD-3-Clause`, `ISC`, `Zlib`, `Unicode-DFS-2016`, `MPL-2.0`. Deny `GPL-*`, `AGPL-*`, `LGPL-*` (incompatible with MIT distribution).
-   - `[bans]`: deny duplicate versions of `arrow*` crates (these would indicate a lancedb pin issue per PRD Section 11 fix). Allow our explicit deps.
-   - `[sources]`: only allow `crates.io` and `github.com` for source. No tarballs, no git deps for now.
-   - `[advisories]`: `vulnerability = "warn"` initially (advisory mode); promote to `"deny"` in task 6.2.
-3. Run `cargo deny check` and inspect output. For each advisory:
+2. Run `cargo deny init` to generate a starter `deny.toml` **using the current version's
+   default schema**. Do NOT hand-write the file from older examples — cargo-deny's config
+   format has been versioned (the v2 schema replaced the old `vulnerability = "warn"` /
+   `unmaintained = "warn"` / `unsound = "warn"` fields). Treat what `cargo deny init`
+   generates as the canonical starting point and modify it. Reference docs:
+   https://embarkstudios.github.io/cargo-deny/checks/advisories/cfg.html
+3. Review and edit the generated `deny.toml`:
+   - `[licenses]`: allow `MIT`, `Apache-2.0`, `Apache-2.0 WITH LLVM-exception`,
+     `BSD-2-Clause`, `BSD-3-Clause`, `ISC`, `Zlib`, `Unicode-DFS-2016`, `MPL-2.0`.
+     Deny `GPL-*`, `AGPL-*`, `LGPL-*` (incompatible with MIT distribution).
+   - `[bans]`: error on duplicate versions of `arrow*` crates (these indicate a
+     lancedb pin issue per PRD Section 11 fix). Allow our explicit deps.
+   - `[sources]`: only allow `crates.io` and `github.com` as sources. No tarballs,
+     no git deps for now.
+   - `[advisories]`: configure severity per the v2 schema. The current cargo-deny
+     uses unified handling rather than per-category fields. Whatever
+     `cargo deny init` generates is the right starting point.
+4. Run `cargo deny check` and inspect output. For each advisory:
    - **Has a fix in a newer version**: update the dep version. Re-run `cargo deny check`.
-   - **No fix available**: add to `[advisories.ignore]` with the advisory ID and a one-line justification.
-   - **License mismatch**: investigate. If a transitive dep has a non-allowed license, file an issue and decide whether to drop the parent dep.
+   - **No fix available**: add the advisory ID to the `ignore = [...]` array inside
+     `[advisories]` — this is an array field, NOT a separate `[advisories.ignore]`
+     sub-table. Use the structured form so the reason survives:
+     ```toml
+     [advisories]
+     # ... (other v2 fields from cargo deny init)
+     ignore = [
+         { id = "RUSTSEC-2024-XXXX", reason = "no fix available; transitive dep of X; tracked in <issue link>" },
+     ]
+     ```
+     Reference: https://embarkstudios.github.io/cargo-deny/checks/advisories/cfg.html#the-ignore-field
+   - **License mismatch**: investigate. If a transitive dep has a non-allowed license,
+     file an issue and decide whether to drop the parent dep.
 4. Create `.github/workflows/audit.yml`:
    ```yaml
    name: Audit
@@ -82,7 +105,7 @@ gh run watch --workflow audit.yml
 ## Notes / open questions
 
 - **License allowlist is opinionated**: the list above is the conservative MIT-compatible set. If a useful crate has a license not on the list (e.g., MPL-2.0 with file-level copyleft), add it explicitly with a rationale comment in `deny.toml`.
-- **`[advisories]` is in advisory mode for v0.1.0**: this means a new vulnerability in a dep would produce a warning, not block CI. Strict mode is a Phase 6 / v0.4 promotion (task 6.2). The reason: at v0.1.0 we don't even have a release; CI failure from a new advisory just slows us down without providing user value yet.
+- **Advisory mode at v0.1.0, strict at v0.4.0**: cargo-deny config has been versioned (v2 schema is current as of cargo-deny ~0.16+). The v2 schema unified the older per-category fields (`vulnerability = "warn"` etc.). Use the severity defaults that `cargo deny init` generates at v0.1.0 — this is the "make CI report but not block" stance. Strict promotion (block on new advisories) lands in task 6.2 with the release pipeline. Source of truth for current config schema: https://embarkstudios.github.io/cargo-deny/checks/advisories/cfg.html — verify before writing `deny.toml`.
 - **Duplicate version ban for `arrow*`**: PRD Section 11 explicitly warns about Arrow version coupling with lancedb. cargo-deny's `[bans]` is the enforcement mechanism. If task 0.1's `cargo tree -d` showed any duplicates, those must be resolved before this task can pass.
 - **EmbarkStudios cargo-deny is mature**: it's been maintained since 2019, used by tokio, Bevy, and many others. Safe to depend on.
 

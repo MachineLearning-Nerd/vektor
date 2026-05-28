@@ -93,6 +93,20 @@ If you write a task file that's missing any of these sections, **you're not done
 
 ---
 
+## Pre-commit checks for task files
+
+A task file is not complete just because it parses as Markdown. Before committing a new task file (or substantive edit), verify each of the following:
+
+1. **Verification commands actually run.** Every command in the `Verification` block must have been executed in a scratch shell (or, for destructive/external commands, dry-run-tested with documented dry-run alternative). If a command would modify shared state (push, force-push, irreversible delete), explicitly note that and provide a non-destructive equivalent.
+2. **Destructive git operations require explicit justification.** Global CLAUDE.md lists `git reset --hard`, `git push --force`, `git checkout -- <file>`, `git clean -f`, and similar as destructive. **None of these may appear in a task file's `Verification` block** without an explicit pre-condition (e.g., "working tree must be clean") and a single-file scope. The default should be temp branches, worktrees, or file-content backups — not history rewriting.
+3. **`Depends on` matches `DEPENDENCIES.md`.** The task file's header `Depends on:` and the DAG must agree. If body prose suggests a dependency that isn't in the header, either fix the prose or update the DAG. Drift between header and DAG is a documentation bug.
+4. **External tool flags are current.** CLI tools (gh, cargo-deny, rustup, pre-commit, etc.) evolve their flags and config schemas. Don't write commands from memory or older examples — verify against `--help`, `gh ... --json help`, or the tool's current docs at the time of writing.
+5. **No magic numbers in commit-message templates.** The `Commit` block's bullet list should describe what *actually changed*, not what was *intended*. If the task evolved during execution, update the Commit block before committing.
+
+If you committed a task file thinking "the commands look right but I didn't run them," you skipped step 1. Stop and run them. Bugs in verification commands waste future executors' time and erode trust in the plan.
+
+---
+
 ## How to create a TODO list for a phase
 
 When starting Phase N:

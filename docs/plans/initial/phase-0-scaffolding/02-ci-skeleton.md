@@ -58,11 +58,26 @@ actionlint .github/workflows/ci.yml  # install via `brew install actionlint`
 git push origin main
 gh run watch  # waits for the run to finish
 
-# Confirm both matrix jobs ran
-gh run list --workflow=ci.yml --limit 1 --json conclusion,jobs -q '.[0].jobs[].name'
+# Confirm the most recent run completed successfully.
+# `jobs` is NOT a valid field on `gh run list --json` (only on `gh run view`),
+# so we do this in two steps: find the run ID, then view its jobs.
+RUN_ID=$(gh run list --workflow=ci.yml --limit 1 --json databaseId -q '.[0].databaseId')
+[ -n "$RUN_ID" ] || { echo "FAIL: no run found for workflow ci.yml"; exit 1; }
+
+# Top-level conclusion
+gh run view "$RUN_ID" --json conclusion -q '.conclusion'   # expect: success
+
+# Matrix job names
+gh run view "$RUN_ID" --json jobs -q '.jobs[].name'
 ```
 
-Expected output: two job names like `build (macos-latest)` and `build (ubuntu-latest)`, both with `conclusion: success`.
+Expected output: `success` for conclusion, and two job names like `build (macos-latest)` and `build (ubuntu-latest)`.
+
+> **Valid `gh run list --json` fields** (as of gh CLI 2.x): `attempt`, `conclusion`,
+> `createdAt`, `databaseId`, `displayTitle`, `event`, `headBranch`, `headSha`, `name`,
+> `number`, `startedAt`, `status`, `updatedAt`, `url`, `workflowDatabaseId`, `workflowName`.
+> The `jobs` field lives on `gh run view`, not `gh run list`. Verify against your
+> installed gh version with `gh run list --json help`.
 
 ## Reference workflow content (don't copy blindly — adapt to actual needs)
 

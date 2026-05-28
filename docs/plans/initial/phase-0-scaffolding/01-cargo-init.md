@@ -72,10 +72,26 @@ cargo build --release
 [ -f target/release/vektor ] || { echo "FAIL: no binary"; exit 1; }
 
 # No duplicate transitive deps (especially arrow*)
-cargo tree -d | grep -v "^$" && { echo "FAIL: duplicate deps"; exit 1; } || echo "OK: no duplicates"
+DUPS=$(cargo tree -d 2>/dev/null)
+if [ -n "$DUPS" ]; then
+    echo "FAIL: duplicate deps detected:"
+    echo "$DUPS"
+    exit 1
+fi
+echo "OK: no duplicate deps"
 
-# Cargo.toml matches PRD
-diff <(awk '/^\[dependencies\]/,/^```/' VEKTOR_PRD.md | sed '/^```/d') <(awk '/^\[dependencies\]/,/^\[/' Cargo.toml | sed '$d') && echo "OK: matches PRD"
+# Print the [dependencies] section for visual cross-check against PRD Section 11.
+# Uses a state-machine awk that handles the case of [dependencies] being adjacent to
+# the next [section] heading. (The earlier `awk '/^\[dependencies\]/,/^\[/'` pattern
+# was broken: when the range start AND end pattern match on the same line, awk's
+# range terminates immediately, emitting only the [dependencies] header — and then
+# sed '$d' deletes that one line, producing empty output.)
+echo "--- Cargo.toml [dependencies] section: ---"
+awk '/^\[dependencies\]/{flag=1; next} /^\[/{flag=0} flag' Cargo.toml
+echo "------"
+echo "Visual cross-check: confirm versions match VEKTOR_PRD.md Section 11."
+echo "A byte-level diff against the PRD is not run automatically because the PRD's"
+echo "TOML block has comments that don't round-trip through cargo's manifest parser."
 ```
 
 ## Notes / open questions
