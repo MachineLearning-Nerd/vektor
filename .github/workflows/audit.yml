@@ -1,0 +1,49 @@
+name: Audit
+
+# Supply-chain security audit via cargo-deny.
+#
+# Runs on:
+#   - any push touching Cargo.toml, Cargo.lock, or deny.toml
+#   - any PR touching the same files
+#   - every Monday 06:00 UTC (cron) — catches newly published advisories
+#     against unchanged deps.
+#
+# At v0.1.0 this is advisory mode: findings surface but do not gate merges.
+# Strict promotion (fail CI on new advisories) lands in task 6.2 with the
+# release pipeline.
+
+on:
+  push:
+    paths:
+      - 'Cargo.toml'
+      - 'Cargo.lock'
+      - 'deny.toml'
+      - '.github/workflows/audit.yml'
+  pull_request:
+    paths:
+      - 'Cargo.toml'
+      - 'Cargo.lock'
+      - 'deny.toml'
+      - '.github/workflows/audit.yml'
+  schedule:
+    - cron: '0 6 * * 1'  # every Monday at 06:00 UTC
+
+# Cancel an in-flight run on the same ref when a newer commit lands.
+concurrency:
+  group: audit-${{ github.ref }}
+  cancel-in-progress: true
+
+# Read-only repo permissions — the action only inspects the source tree.
+permissions:
+  contents: read
+
+jobs:
+  cargo-deny:
+    name: cargo-deny check
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Run cargo-deny
+        uses: EmbarkStudios/cargo-deny-action@v2

@@ -1,0 +1,156 @@
+# cargo-deny configuration for Vektor
+# ----------------------------------------------------------------------------
+# Purpose: supply-chain security baseline for v0.1.0 (advisory mode). Strict
+# enforcement (failing CI on new advisories) is promoted in task 6.2 with the
+# release pipeline.
+#
+# Schema: cargo-deny v2 (validated against cargo-deny 0.19.7).
+# Reference: https://embarkstudios.github.io/cargo-deny/checks/advisories/cfg.html
+# ----------------------------------------------------------------------------
+
+# The graph table configures how the dependency graph is constructed.
+[graph]
+# No target filtering — check every transitive dep regardless of host platform.
+targets = []
+all-features = false
+no-default-features = false
+
+[output]
+feature-depth = 1
+
+# ----------------------------------------------------------------------------
+# [advisories] — RustSec database checks.
+# v2 schema: unified handling via per-category fields (unmaintained / unsound /
+# yanked) rather than the old `vulnerability = "warn"` per-severity fields.
+# Reference: https://embarkstudios.github.io/cargo-deny/checks/advisories/cfg.html
+# ----------------------------------------------------------------------------
+[advisories]
+# Use the default advisory database location and URL.
+# db-path = "$CARGO_HOME/advisory-dbs"
+# db-urls = ["https://github.com/rustsec/advisory-db"]
+
+# At v0.1.0 we are in *advisory mode*: surface findings but do not block. The
+# defaults (`unmaintained = "all"`, `unsound = "all"`, `yanked = "warn"`) are
+# kept so CI reports issues. Strict enforcement lands in task 6.2.
+yanked = "warn"
+
+# Existing baseline advisories that have NO upstream fix available. Each entry
+# documents the dep chain so a future maintainer can re-evaluate when the
+# transitive parent (lancedb) updates. All three are `unmaintained`
+# announcements, not security vulnerabilities.
+ignore = [
+    { id = "RUSTSEC-2025-0141", reason = "bincode 2.0.1 — upstream team ceased development; no safe upgrade; transitive via lindera → lance-tokenizer → lancedb 0.29. Re-evaluate when lancedb updates lindera." },
+    { id = "RUSTSEC-2021-0153", reason = "encoding 0.2.33 — unmaintained since 2016; no safe upgrade; transitive via lindera-dictionary → lance-tokenizer → lancedb 0.29. Re-evaluate when lancedb drops the legacy encoding dep." },
+    { id = "RUSTSEC-2024-0436", reason = "paste 1.0.15 — archived by author; no safe upgrade; transitive via datafusion-common → lance → lancedb 0.29. Re-evaluate when datafusion migrates to pastey." },
+]
+
+# ----------------------------------------------------------------------------
+# [licenses] — MIT-compatible permissive allowlist.
+# All listed licenses are compatible with our MIT distribution. GPL/AGPL/LGPL
+# are deliberately omitted; they are denied implicitly because they are not
+# on the allow-list.
+# ----------------------------------------------------------------------------
+[licenses]
+# 0.92 (slightly tighter than the 0.8 default) requires close-to-canonical
+# license text to claim a match.
+confidence-threshold = 0.92
+
+allow = [
+    # Task-spec required allowlist
+    "MIT",
+    "Apache-2.0",
+    "Apache-2.0 WITH LLVM-exception",
+    "BSD-2-Clause",
+    "BSD-3-Clause",
+    "ISC",
+    "Zlib",
+    "Unicode-DFS-2016",
+    "MPL-2.0",
+
+    # Additional MIT-compatible permissive licenses present in the dep tree.
+    # Each is at least as permissive as MIT for our redistribution case.
+    "0BSD",                  # Zero-clause BSD (more permissive than MIT). Present via adler2, mock_instant.
+    "BSL-1.0",               # Boost Software License (MIT-compatible). Present via ryu, xxhash-rust.
+    "CC0-1.0",               # Creative Commons Zero (public domain dedication). Present via notify (direct dep), blake3, others.
+    "CDLA-Permissive-2.0",   # Community Data License Agreement (permissive variant). Present via webpki-root-certs.
+    "MIT-0",                 # MIT No Attribution (more permissive than MIT). Present via aws-lc-sys, dunce.
+    "Unicode-3.0",           # Unicode Foundation License v3 (successor to Unicode-DFS-2016). Present via unicode-ident, icu_* crates.
+    "Unlicense",             # Public domain equivalent. Present via ignore (direct dep), walkdir, memchr, others.
+    "zlib-acknowledgement",  # Variant of Zlib license. Present via fastdivide.
+]
+
+# Per-crate exceptions (none currently — no transitive dep requires a license
+# outside the allowlist).
+exceptions = []
+
+[licenses.private]
+# Vektor is published openly; nothing to ignore here.
+ignore = false
+registries = []
+
+# ----------------------------------------------------------------------------
+# [bans] — duplicate version & banned-crate enforcement.
+# PRD Section 11 (Arrow coupling fix) explicitly warns about duplicate arrow*
+# versions; this section is the enforcement mechanism.
+# ----------------------------------------------------------------------------
+[bans]
+# Warn on duplicates in general (many duplicates are unavoidable in a healthy
+# Rust dep tree). Arrow duplicates specifically are escalated to deny below.
+multiple-versions = "warn"
+wildcards = "warn"
+highlight = "all"
+workspace-default-features = "allow"
+external-default-features = "allow"
+
+# Globally allowed crates (none at v0.1.0).
+allow = []
+
+# Arrow version coupling enforcement (PRD Section 11):
+# Any duplicate of `arrow`, `arrow-array`, `arrow-schema`, etc. indicates we
+# have re-introduced the lancedb arrow version pin conflict that v2.3 of the
+# PRD removed. `deny-multiple-versions = true` escalates a duplicate of the
+# named crate to an error, while the global `multiple-versions = "warn"`
+# above keeps other duplicates at warning level.
+# Listed individually because cargo-deny does not glob crate names; the
+# enumeration mirrors the actual `arrow*` crate family pulled transitively
+# by lancedb.
+deny = [
+    { crate = "arrow", deny-multiple-versions = true, reason = "PRD Section 11: arrow* versions must be inherited transitively from lancedb. A duplicate here means we have re-introduced an independent arrow pin." },
+    { crate = "arrow-arith", deny-multiple-versions = true, reason = "PRD Section 11: arrow* versions must be inherited transitively from lancedb." },
+    { crate = "arrow-array", deny-multiple-versions = true, reason = "PRD Section 11: arrow* versions must be inherited transitively from lancedb." },
+    { crate = "arrow-buffer", deny-multiple-versions = true, reason = "PRD Section 11: arrow* versions must be inherited transitively from lancedb." },
+    { crate = "arrow-cast", deny-multiple-versions = true, reason = "PRD Section 11: arrow* versions must be inherited transitively from lancedb." },
+    { crate = "arrow-csv", deny-multiple-versions = true, reason = "PRD Section 11: arrow* versions must be inherited transitively from lancedb." },
+    { crate = "arrow-data", deny-multiple-versions = true, reason = "PRD Section 11: arrow* versions must be inherited transitively from lancedb." },
+    { crate = "arrow-ipc", deny-multiple-versions = true, reason = "PRD Section 11: arrow* versions must be inherited transitively from lancedb." },
+    { crate = "arrow-json", deny-multiple-versions = true, reason = "PRD Section 11: arrow* versions must be inherited transitively from lancedb." },
+    { crate = "arrow-ord", deny-multiple-versions = true, reason = "PRD Section 11: arrow* versions must be inherited transitively from lancedb." },
+    { crate = "arrow-row", deny-multiple-versions = true, reason = "PRD Section 11: arrow* versions must be inherited transitively from lancedb." },
+    { crate = "arrow-schema", deny-multiple-versions = true, reason = "PRD Section 11: arrow* versions must be inherited transitively from lancedb." },
+    { crate = "arrow-select", deny-multiple-versions = true, reason = "PRD Section 11: arrow* versions must be inherited transitively from lancedb." },
+    { crate = "arrow-string", deny-multiple-versions = true, reason = "PRD Section 11: arrow* versions must be inherited transitively from lancedb." },
+]
+
+# Crates that may legitimately appear with multiple versions in the graph.
+# Currently empty — if a future dep update introduces unavoidable duplicates,
+# add them here with a `reason` rather than silencing globally.
+skip = []
+skip-tree = []
+
+# ----------------------------------------------------------------------------
+# [sources] — restrict crate sources to crates.io + github.com only.
+# No tarballs, no foreign registries.
+# ----------------------------------------------------------------------------
+[sources]
+unknown-registry = "deny"
+unknown-git = "deny"
+allow-registry = ["https://github.com/rust-lang/crates.io-index"]
+allow-git = []
+
+[sources.allow-org]
+# Any github.com org we explicitly want to permit git deps from. Empty at
+# v0.1.0 because Cargo.toml has no `git = "..."` deps. Add here (e.g. "lancedb")
+# only if we later need an unreleased branch.
+github = []
+gitlab = []
+bitbucket = []
