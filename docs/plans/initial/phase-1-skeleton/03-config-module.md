@@ -66,13 +66,17 @@ Precedence (lowest to highest): defaults → file → env vars → CLI args (CLI
                );
 
            // 1. file source — explicit override if provided, else default location.
+           // CAPTURE the boolean BEFORE we consume `override_path` via `.or_else`.
+           // Otherwise the subsequent `override_path.is_some()` is a use-after-move
+           // and Rust rejects with E0382.
+           let explicit_override = override_path.is_some();
            let file_path = override_path.or_else(|| {
                dirs::home_dir().map(|h| h.join(".vektor").join("config.toml"))
            });
            if let Some(p) = file_path {
                if p.exists() {
                    builder = builder.add_source(config::File::from(p));
-               } else if override_path.is_some() {
+               } else if explicit_override {
                    // If user explicitly pointed at a config that doesn't exist, error out
                    // rather than silently using defaults (defensive: catches typos in --config).
                    return Err(VektorError::Config(format!(

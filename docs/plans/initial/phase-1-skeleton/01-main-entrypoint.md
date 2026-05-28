@@ -27,7 +27,7 @@ The success metric here is "the binary takes args and dispatches structurally," 
 
 ## Approach
 
-1. Rewrite `src/main.rs`:
+1. Rewrite `src/main.rs`. At this stage `cli::run` is a no-arg stub; task 1.4 will change it to `cli::run(cli: Cli)`. For task 1.1, keep it no-arg so main compiles:
    ```rust
    use anyhow::Result;
 
@@ -37,17 +37,33 @@ The success metric here is "the binary takes args and dispatches structurally," 
 
    #[tokio::main]
    async fn main() -> Result<()> {
-       // Real implementation lands in task 1.4 once cli module exists.
-       // For now, just parse argv and dispatch to a stub.
+       // Real implementation lands in task 1.4. For now, dispatch to the
+       // no-arg stub in cli.rs. Task 1.4 will change main to:
+       //   let cli = cli::Cli::parse();
+       //   cli::run(cli).await
        cli::run().await
    }
    ```
-2. Create the three module stubs as empty files:
+2. Create the three module stubs. **Empty `.rs` files are valid Rust** — `mod foo;` referring to an empty `foo.rs` compiles fine. Do NOT add `pub fn placeholder() {}` — an unused public function in a binary's private module triggers `dead_code` under `clippy -D warnings`. Instead, give each stub a single module-level doc comment so the file is non-empty and self-documenting:
    ```bash
-   touch src/error.rs src/config.rs src/cli.rs
+   cat > src/error.rs <<'EOF'
+   //! Vektor error types. Populated by task 1.2.
+   EOF
+   cat > src/config.rs <<'EOF'
+   //! Vektor configuration. Populated by task 1.3.
+   EOF
    ```
-   Each gets a minimal `pub fn placeholder() {}` or doc comment so `cargo check` doesn't complain about empty files.
-3. In `src/cli.rs`, add a temporary `pub async fn run() -> anyhow::Result<()> { Ok(()) }` so main compiles. Task 1.4 will replace this.
+   Doc comments are not "items" so clippy never flags them.
+3. `src/cli.rs` is special — main calls into it, so it must define at least the symbol main references. Add a temporary, deliberately-`unused`-allowed stub:
+   ```rust
+   //! Vektor CLI. Populated by task 1.4.
+
+   #[allow(dead_code)]
+   pub async fn run() -> anyhow::Result<()> {
+       Ok(())
+   }
+   ```
+   `#[allow(dead_code)]` on the function is acceptable because the call site exists in main.rs (so it's reachable), but clippy can briefly disagree during partial compilation. Remove the attribute in task 1.4 once `run()` does real work.
 4. Run `cargo check` and `cargo clippy -- -D warnings`. Both must pass.
 5. Run the binary: `cargo run -- --help`. It should exit 0 (no help text yet; that arrives with clap in task 1.4).
 

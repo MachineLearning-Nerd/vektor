@@ -94,10 +94,10 @@ Define the CLI surface via `clap`'s derive macro. v0.1.0 exposes 3 top-level sub
    }
    ```
 
-3. Dispatcher — **pass the parsed `--config` path through to `Config::load`** so the global flag isn't silently ignored:
+3. Dispatcher — **parse Cli ONCE in `main()` and pass it into `run`** so task 1.5 can read `cli.verbose` to initialize tracing before dispatch. Two-call signature pattern:
    ```rust
-   pub async fn run() -> crate::error::Result<()> {
-       let cli = Cli::parse();
+   // src/cli.rs
+   pub async fn run(cli: Cli) -> crate::error::Result<()> {
        // Task 1.3 defines Config::load(Option<PathBuf>). Forward the parsed
        // --config flag so `vektor --config /tmp/x.toml ...` is honored.
        let _config = crate::config::Config::load(cli.config.clone())?;
@@ -116,7 +116,18 @@ Define the CLI surface via `clap`'s derive macro. v0.1.0 exposes 3 top-level sub
    }
    ```
 
-   This requires task 1.3's `Config::load` signature to be `pub fn load(override_path: Option<PathBuf>) -> Result<Config>` — see the updated 03-config-module.md.
+   Then in `src/main.rs`:
+   ```rust
+   #[tokio::main]
+   async fn main() -> anyhow::Result<()> {
+       let cli = cli::Cli::parse();
+       // (Task 1.5 will insert telemetry::init(&cli) here, between parse and dispatch.)
+       cli::run(cli).await?;
+       Ok(())
+   }
+   ```
+
+   This requires task 1.3's `Config::load` signature to be `pub fn load(override_path: Option<PathBuf>) -> Result<Config>` — see the updated 03-config-module.md. Also requires task 1.1's `main()` to defer `Cli::parse` to here (not call it from `run()`).
 
 4. Test:
    - `vektor --help` lists all 3 subcommands
@@ -130,8 +141,8 @@ Define the CLI surface via `clap`'s derive macro. v0.1.0 exposes 3 top-level sub
 
 - [ ] `Cli` struct uses `#[derive(Parser)]` with `version` and `about` attributes
 - [ ] 3 subcommands present: `index`, `serve`, `models` (with `download` action)
-- [ ] Global `--config` and `--verbose` flags work on every subcommand
-- [ ] `vektor --config /tmp/test.toml <subcommand>` actually reads `/tmp/test.toml` (verify by writing a TOML with `[embedding] backend = "ollama"`, running `vektor -v <subcommand>`, and seeing the override take effect; a missing `/tmp/test.toml` must return `VektorError::Config` with the missing-file message, NOT silently fall back to defaults)
+- [ ] Global `--config` and `--verbose` flags are recognized by `clap::Parser::parse` (verified by `vektor --config /tmp/foo --help` and `vektor -v --help` exiting 0 with no clap parse errors — clap rejects unknown global flags with exit code 2)
+- [ ] **`--config` is observable end-to-end via unit test, not via CLI**: add a `#[test]` in `src/config.rs` that calls `Config::load(Some(temp_toml_path))` with a temp file containing `[embedding] backend = "ollama"` and asserts the result has `embedding.backend == "ollama"`. Add a second test that calls `Config::load(Some(nonexistent_path))` and asserts `Err(VektorError::Config(_))`. Defer CLI-observable verification of `--config` to task 1.5 (when tracing exists to log the loaded config) or task 1.6 (when MCP handlers can expose it). The 1.4 stubs intentionally don't print config values — that would be scope creep into task 1.5/1.6's surface.
 - [ ] Each subcommand handler currently returns `VektorError::NotImplemented` with a phase reference
 - [ ] `vektor --help` exits 0 and lists subcommands
 - [ ] `vektor --version` matches `Cargo.toml`'s `version = "0.1.0"`
