@@ -86,13 +86,19 @@ Precedence (lowest to highest): defaults → file → env vars → CLI args (CLI
            }
 
            // 2. env override: VEKTOR__SECTION__KEY = X overrides section.key.
-           // Uses DOUBLE underscore as section separator so compound key names
-           // (e.g. `openai_api_key`) survive intact. With single underscore,
-           // VEKTOR_EMBEDDING_OPENAI_API_KEY would mis-map to
-           // embedding.openai.api.key — wrong.
+           // Uses DOUBLE underscore for BOTH the prefix separator AND the section
+           // separator so the leading prefix strips cleanly. With prefix_separator("_")
+           // and the documented env var `VEKTOR__EMBEDDING__BACKEND`, the config
+           // crate strips only `VEKTOR_` and treats `_EMBEDDING__BACKEND` as the
+           // remainder, producing the path `_embedding.backend` — which doesn't
+           // override anything in the schema. Using prefix_separator("__") consumes
+           // `VEKTOR__` cleanly, leaving `EMBEDDING__BACKEND` to split into
+           // `embedding.backend` as intended. Compound key names like
+           // `openai_api_key` still survive because the SECTION separator is also
+           // `__`, distinct from the single underscore inside a key name.
            builder = builder.add_source(
                config::Environment::with_prefix("VEKTOR")
-                   .prefix_separator("_")        // VEKTOR + _ + rest
+                   .prefix_separator("__")       // strips full "VEKTOR__" prefix
                    .separator("__")              // sections joined by __
                    .convert_case(config::Case::Snake),
            );
@@ -205,7 +211,7 @@ VEKTOR__EMBEDDING__BACKEND=ollama cargo test config::tests::test_env_override
 
 - **`config` crate vs hand-rolled**: the `config` crate handles defaults + file + env merging with proper precedence. Hand-rolling this is a footgun (most "simple" implementations forget about case-conversion for env vars). Stick with the crate.
 - **`figment` alternative**: figment is also good. We standardize on `config` because it's already in PRD Section 11. Don't introduce a new dep.
-- **Env var separator**: `VEKTOR__EMBEDDING__BACKEND` → `embedding.backend` (double underscore between sections; `prefix_separator("_")` strips the `VEKTOR` prefix; `separator("__")` splits the remainder into path elements). This is intentionally NOT single-underscore: with single underscore, `VEKTOR_EMBEDDING_OPENAI_API_KEY` would mis-map to `embedding.openai.api.key` instead of the intended `embedding.openai_api_key`. The `config` crate API for this has churned between versions — verify against [docs.rs/config/0.15](https://docs.rs/config/0.15) before tweaking.
+- **Env var separator**: `VEKTOR__EMBEDDING__BACKEND` → `embedding.backend`. Both `prefix_separator` AND `separator` are double underscore. With `prefix_separator("__")` the full `VEKTOR__` is stripped cleanly; with single underscore `prefix_separator("_")` only `VEKTOR_` is stripped, leaving `_EMBEDDING__BACKEND` which mis-maps to `_embedding.backend` (no leading-underscore section exists in the schema, so the override silently no-ops). Compound key names like `openai_api_key` survive because the SECTION separator is `__`, distinct from the single underscore inside the key name itself. The `config` crate API for this has churned between versions — verify against [docs.rs/config/0.15](https://docs.rs/config/0.15) before tweaking.
 - **Don't load on every call**: `Config::load()` should be called once in main (task 1.4) and the result passed around. Caching globally via `OnceCell` is unnecessary at v0.1.0.
 - **Path expansion**: `dirs::home_dir()` returns the OS-conventional home. Don't manually expand `~`. Don't read `$HOME` directly.
 

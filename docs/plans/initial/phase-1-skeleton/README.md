@@ -35,7 +35,7 @@ All must be true before tagging `v0.1.0`:
 - [ ] CI green on macOS-latest + ubuntu-latest with `cargo fmt --check`, `cargo clippy -- -D warnings`, `cargo test`, `cargo doc`
 - [ ] `gh release create v0.1.0` creates a notes-only GitHub Release (zero binary attachments at v0.1.0 per the roadmap; binaries land at v0.4.0 / task 6.2)
 - [ ] `cargo install --git https://github.com/MachineLearning-Nerd/vektor --tag v0.1.0` succeeds on a fresh machine
-- [ ] `README.md` walks a fresh user from `cargo install` (or binary download) to `vektor --help` in 3 commands
+- [ ] `README.md` walks a fresh user from `cargo install --git ... --tag v0.1.0` (the source-install path; v0.1.0 ships no binary attachments per task 1.7 / roadmap) through to `vektor --help` in 3 commands, with the `protoc` prerequisite called out before the install command
 
 ---
 

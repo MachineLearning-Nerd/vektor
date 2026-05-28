@@ -47,7 +47,7 @@ This task establishes the **error contract** that every subsequent module will f
        Mcp(String),
    }
    ```
-2. Make the error type publicly exported by adding `pub mod error;` (already done in task 1.1).
+2. **Module visibility**: task 1.1's `src/main.rs` declares `mod error;` (private). That's correct for a binary crate — `pub mod` is only meaningful when something outside the crate consumes the module. Do NOT change to `pub mod`; it adds no value and is its own clippy nit. What matters for dead_code is that something in the crate **uses** `VektorError`/`Result` — see step below about the clippy gate.
 3. **Do NOT re-export `Result` at the crate root.** Task 1.1's `src/main.rs` already does `use anyhow::Result;` for top-level propagation. Adding `pub use error::{Result, VektorError};` in main.rs would collide with the anyhow import (E0252: "the name `Result` is defined multiple times"). The two-layer pattern: library modules refer to `crate::error::Result` explicitly (or `use crate::error::Result;` locally); main keeps `anyhow::Result` for top-level `?`-into-anyhow propagation. If you ever need `VektorError` in main, import it as a single named item: `use crate::error::VektorError;` — that's collision-free.
 4. Verify `cargo check` still passes — no breaking changes to existing code.
 5. Add a unit test that exercises each error variant's `Display` output:
@@ -77,13 +77,13 @@ This task establishes the **error contract** that every subsequent module will f
 - [ ] `#[from] std::io::Error` works (allows `?` on file ops)
 - [ ] At least 2 unit tests exercising `Display` output
 - [ ] `cargo test --workspace` passes
-- [ ] `cargo clippy -- -D warnings` clean
+- [ ] `cargo clippy --all-targets -- -D warnings` clean — **`--all-targets` is required**. Without it, clippy only checks the main binary; `VektorError` and `Result` aren't referenced by main yet (task 1.3 will be the first task that propagates `VektorError` through `Config::load`), so clippy would flag them `dead_code`. With `--all-targets`, the unit tests are compiled too, and the test references to `VektorError` count as legitimate uses for the dead_code analyzer.
 
 ## Verification
 
 ```bash
 cargo test error::tests
-cargo clippy -- -D warnings
+cargo clippy --all-targets -- -D warnings   # --all-targets compiles tests so VektorError uses count
 grep -E "^pub (enum|type) " src/error.rs  # expect VektorError + Result
 ```
 

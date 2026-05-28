@@ -42,7 +42,7 @@ This is the **longest task in Phase 1**. Read rmcp 1.7's docs.rs page before sta
    ├── mod.rs        — pub use; entry point fn start_stdio_server()
    ├── server.rs     — VektorServer struct implementing ServerHandler
    ├── handlers.rs   — handle_index_codebase, handle_search_code, handle_get_context_for_prompt
-   └── schemas.rs    — JSON schemas for the 3 tools (input + output)
+   └── schemas.rs    — Input JSON schemas for the 3 tools (v0.1 input-only; PRD §9-shape output schemas are deferred to Phase 4 when handlers do real work — see step 5 below for the rationale)
    ```
 
 3. Implement `VektorServer`:
