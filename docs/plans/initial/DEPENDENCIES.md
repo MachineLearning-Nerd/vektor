@@ -118,7 +118,7 @@ graph TD
 | 2.6 sliding-window fallback | 2.3 | 2.7 | ✅ `8a5655b` |
 | 2.7 chunk_file() dispatcher | 2.2, 2.5, 2.6 | 2.8 | ✅ `ac3f9f8` |
 | 2.8 index CLI Phase 2 behavior | 2.2, 2.7 | 2.9 | ✅ `aca571b` |
-| 2.9 v0.2.0 release readiness docs | 2.8 | publish gate, 3.* | ✅ this change; tag/release requires explicit approval |
+| 2.9 v0.2.0 release readiness docs | 2.8 | publish gate, 3.* | ✅ `v0.2.0` tagged + released (private) |
 
 ### Phase 3 — Embedding + Storage (task list — per-task files TBD)
 

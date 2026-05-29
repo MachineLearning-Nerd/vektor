@@ -12,13 +12,13 @@ This plan covers **Roadmap Stage 2** only (see [`VEKTOR_ROADMAP.md`](../../../VE
 |---|---|---|---|
 | Phase 0 — Scaffolding | (none — pre-`v0.1.0`) | ✅ **Done** (4 of 4) | Cargo init ✅ (`a3a2c2a`); hooks ✅ (`689d5b2`); deny ✅ (`08361cc`); CI ✅ (`73ed9d9` + `080305d`); GitHub repo at https://github.com/MachineLearning-Nerd/vektor (private). |
 | Phase 1 — Skeleton | `v0.1.0` | ✅ **Done** — published (private) | Binary entry point, config, error types, CLI, tracing, and no-op MCP handlers implemented. `v0.1.0` tag + GitHub Release exist (private). Repo stays **private until launch (`v0.4.0`)** by decision; the public flip + unauthenticated-install gate are deferred to the launch milestone, not pending. |
-| Phase 2 — Discovery + Chunking | `v0.2.0` | ✅ Implementation complete locally; publish pending | File discovery, HashStore, AST/sliding chunking, and Phase 2 `vektor index` behavior are implemented on `phase-2-discovery-chunking`. Tag/GitHub Release require explicit approval. |
+| Phase 2 — Discovery + Chunking | `v0.2.0` | ✅ **Done** — published (private) | File discovery, HashStore, AST/sliding chunking, and Phase 2 `vektor index` behavior, merged to main via PR #1. `v0.2.0` tag + notes-only GitHub Release exist (private). |
 | Phase 3 — Embedding + Storage | `v0.3.0` | ⬜ Not started | Readiness docs only. Per-task expansion and embedding/storage work remain blocked until the Phase 2 publish gate is approved. |
 | Phase 4 — Search + MCP | (interim) | ⬜ Not started | Tantivy BM25, RRF fusion, MCP tool dispatch for 3 primary tools. |
 | Phase 5 — Context Assembly | `v0.4.0` | ⬜ Not started | TokenCounter, Deduplicator, RelatedExpander, QueryCache, ShallowIndexer, RecencyTracker. |
 | Phase 6 — Launch Polish | `v0.4.0` | ⬜ Not started | `vektor init`, signed release pipeline, lightweight benchmark gate, `BENCHMARKS.md` baseline. |
 
-**Active phase**: Phase 2 release-readiness docs. Publish actions for `v0.1.0`/`v0.2.0` remain explicitly gated; Phase 3 implementation has not started.
+**Active phase**: Phase 3 readiness (per-task file expansion). `v0.1.0` and `v0.2.0` are tagged + released (private); the public flip is deferred to launch (`v0.4.0`). Phase 3 implementation has not started.
 
 ---
 

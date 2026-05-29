@@ -5,7 +5,7 @@
 **Roadmap mapping**: Stage 2 / `v0.2.0`
 **PRD mapping**: Section 4.2 (Chunker), Section 12 Week 2 Functions 2.1–2.5, plus `hash_file`/HashStore from Functions 1.3–1.4
 **Effort estimate**: 3–5 weeks of focused part-time work
-**Status**: ✅ Implementation complete on branch `phase-2-discovery-chunking`; `v0.2.0` tag/GitHub Release are pending explicit publish approval.
+**Status**: ✅ Done — merged to main via PR #1; `v0.2.0` tag + notes-only GitHub Release published (private). Public flip deferred to launch (`v0.4.0`).
 
 ---
 
