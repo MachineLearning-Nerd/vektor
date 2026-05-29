@@ -6,7 +6,7 @@
 **Roadmap stage**: Stage 2 / `v0.1.0`
 **Effort estimate**: L (4–8h)
 **Depends on**: 1.5
-**Blocks**: 1.7
+**Blocks**: 1.7a
 
 ## Objective
 
@@ -86,7 +86,7 @@ This is the **longest task in Phase 1**. Read rmcp 1.7's docs.rs page before sta
                "index_codebase" => handlers::handle_index_codebase(req.arguments),
                "search_code" => handlers::handle_search_code(req.arguments),
                "get_context_for_prompt" => handlers::handle_get_context_for_prompt(req.arguments),
-               other => return Err(...),
+               other => return Err(ErrorData::invalid_params(format!("unknown tool: {other}"), None)),
            };
            // rmcp 1.7 does NOT expose a `CallToolResult::text(...)`
            // shorthand — that was a 0.x idiom. The documented constructor
@@ -133,7 +133,11 @@ This is the **longest task in Phase 1**. Read rmcp 1.7's docs.rs page before sta
    ```
 
 5. Tool schemas (`src/mcp/schemas.rs`):
-   - For each tool, define **only `input_schema`** at v0.1.0 — matching PRD Section 9's request shapes. Do NOT advertise PRD Section 9's response shapes as `output_schema`. The PRD §9 output shapes describe the REAL handler responses (rich `context` / `chunks` / `metadata` payloads); at v0.1.0 every handler returns the no-op `{"status": "not implemented yet", "phase": "..."}` JSON, which would violate any output_schema we publish. Omit `output_schema` from the tool declarations at v0.1.0. **Phase 4 (when handlers do real work) adds the output_schema fields to match PRD §9.** If rmcp 1.7 requires an output_schema field, publish a minimal stub matching the no-op shape: `{"type": "object", "properties": {"status": {"type": "string"}, "phase": {"type": "string"}}}`.
+   - For each tool, define **only `input_schema`** at v0.1.0 — matching the full PRD Section 9 request shapes, including documented optional fields. Do NOT advertise PRD Section 9's response shapes as `output_schema`. The PRD §9 output shapes describe the REAL handler responses (rich `context` / `chunks` / `metadata` payloads); at v0.1.0 every handler returns the no-op `{"status": "not implemented yet", "phase": "..."}` JSON, which would violate any output_schema we publish. Omit `output_schema` from the tool declarations at v0.1.0. **Phase 4 (when handlers do real work) adds the output_schema fields to match PRD §9.** If rmcp 1.7 requires an output_schema field, publish a minimal stub matching the no-op shape: `{"type": "object", "properties": {"status": {"type": "string"}, "phase": {"type": "string"}}}`.
+   - **`required` arrays (the v0.1 input contract — frozen at the tag)**: `index_codebase` → `["path"]`; `search_code` → `["query", "path"]`; `get_context_for_prompt` → `["query", "path"]`. All other PRD §9 request fields are optional but still advertised: `index_codebase.force_full/extensions/embedding_backend`, `search_code.top_k/mode/filter_ext/bypass_cache`, and `get_context_for_prompt.token_budget/max_files/include_related/min_relevance/include_docs/bypass_cache/scope`.
+   - Keep `additionalProperties: false` only after the full documented property set is declared. This keeps the v0.1 contract strict without causing MCP clients to strip or reject valid PRD §9 arguments before the real handlers land.
+   - `force_full` is the MCP request field from PRD §9. `force` remains a CLI-only concept and must not be advertised by the MCP schema.
+   - `token_budget` is OPTIONAL — advertised with `"default": 8000` but NOT in `required`. PRD §9 frames it as giving agents "direct control" over context size with "recommended" values (PRD lines 91, 1099), and a JSON Schema field cannot be both `required` AND fall back to a `default` (the two are mutually exclusive). Relaxing `required` → optional after the tag ships is a contract change, so pin it correctly now.
    - Use `serde_json::json!` macro for simplicity at v0.1; switch to derive-based schemas (e.g., `schemars`) in Phase 4
 
 6. Integration test (`tests/mcp_serve.rs`):
@@ -193,7 +197,7 @@ This is the **longest task in Phase 1**. Read rmcp 1.7's docs.rs page before sta
 - [ ] `VektorServer` has no unread fields (per Approach step 3b — `config: Config` deferred to Phase 4 when handlers consume it)
 - [ ] `tools/list` returns exactly the 3 expected tool names
 - [ ] Each `tools/call` returns the no-op JSON with `phase` field set
-- [ ] `tools/call` with an unknown tool name returns an MCP error response (not a crash)
+- [ ] `tools/call` with an unknown tool name returns an `invalid_params` (-32602) MCP error that names the unknown tool — NOT `method_not_found` (the `tools/call` method exists; the `name` argument is what's invalid) — and not a crash
 - [ ] Stdout contains **only** MCP protocol messages (no log noise) — verify by running serve with `-vvv` and checking stdout is parseable as JSON-RPC line-by-line
 - [ ] Integration test in `tests/mcp_serve.rs` passes
 - [ ] Server shuts down cleanly on stdin EOF or SIGTERM

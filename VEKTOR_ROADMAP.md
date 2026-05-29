@@ -11,8 +11,8 @@
 |---|---|
 | Document | VEKTOR_ROADMAP.md |
 | Version | 0.1.0 |
-| Last Updated | 2026-05-27 |
-| Status | Active — Stage 1 in progress |
+| Last Updated | 2026-05-28 |
+| Status | Active — Stage 2 in progress |
 | Tracks PRD | VEKTOR_PRD.md v2.5.0 |
 | Owner | Dinesh (solo) |
 | Versioning Convention | Hybrid: Phase = engineering scope, `vX.Y.Z` = cargo release tag |
@@ -57,7 +57,7 @@ Each arrow is a hard gate — the next stage does not begin until the previous s
 
 ---
 
-## Current State (2026-05-27, updated again)
+## Current State (2026-05-28)
 
 | Item | Status |
 |---|---|
@@ -78,7 +78,9 @@ Each arrow is a hard gate — the next stage does not begin until the previous s
 | GitHub Actions CI workflow (task 0.2) | ✅ Done (commits `73ed9d9` + protoc fix `080305d`) — green on macOS+Linux |
 | GitHub repo created and pushed | ✅ Private at https://github.com/MachineLearning-Nerd/vektor |
 | **Phase 0 (Scaffolding)** | ✅ **DONE — all 4 tasks complete** |
-| Any Rust code beyond `fn main()` stub | ⬜ Not started (Phase 1 / task 1.1 is the next active work) |
+| Phase 1 skeleton implementation | ✅ Done in working tree (pending commit/tag): async entrypoint, error/config modules, clap CLI, tracing, rmcp stdio no-op handlers, tests |
+| Phase 1 release prep (`1.7a`) | ✅ Done in working tree: README install prerequisites, draft release notes, Phase 2 task files, tracker updates |
+| `v0.1.0` publish (`1.7b`) | ⬜ Pending explicit release action: push final commit, wait for `ci.yml`, make repo public if required, tag, GitHub Release |
 
 ---
 
@@ -126,7 +128,7 @@ Bring the PRD into a state where every implementation conversation downstream pr
 **PRD reference**: Sections 4, 6, 11, 12 (Weeks 1–6 of PRD Phase 1) + B6 from review + brought-forward items (B1, `vektor init`, C8.1, C8.2, lightweight benchmark, README/LICENSE)
 **Depends on**: Stage 1 complete
 **Effort**: Large (timeline lifted; estimate 14–18 weeks part-time for a Rust learner — slightly larger than v2.5 estimate to absorb the brought-forward items)
-**Status**: Not started
+**Status**: In progress — `v0.1.0` skeleton implemented locally; publish pending
 
 ### Goal
 A working MCP server that can index a real codebase, perform hybrid BM25 + semantic search, and assemble token-budgeted context — **with the security, distribution, and launch prerequisites a stranger needs to actually use the binary on day one.** No more "alpha that only the author can run."

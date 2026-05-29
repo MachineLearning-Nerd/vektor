@@ -65,6 +65,10 @@ uuid = { version = "1", features = ["v4"] }
 lru = "0.18"
 sysinfo = "0.38"
 
+[dev-dependencies]
+temp-env = "0.3"
+tempfile = "3"
+
 # Phase 2 (uncomment when needed)
 # git2 = "0.21"
 # regex = "1"

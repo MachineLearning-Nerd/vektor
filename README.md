@@ -5,7 +5,7 @@
 > 100% your machine. 100% open source.
 
 [![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE)
-[![Status](https://img.shields.io/badge/status-pre--alpha%20(design)-orange.svg)](VEKTOR_ROADMAP.md)
+[![Status](https://img.shields.io/badge/status-v0.1.0%20skeleton%20ready-yellow.svg)](VEKTOR_ROADMAP.md)
 [![PRD](https://img.shields.io/badge/PRD-v2.5-blue.svg)](VEKTOR_PRD.md)
 
 ---
@@ -33,9 +33,9 @@ The first three tools (`index_codebase`, `search_code`, `get_context_for_prompt`
 
 ## Status
 
-**Pre-alpha — design phase. No Rust code exists yet.**
+**Pre-alpha — `v0.1.0` skeleton ready locally; release publish pending.**
 
-The current artifacts are the design documents:
+The current artifacts are the design documents plus a runnable Rust skeleton:
 
 | Document | Purpose | Lines |
 |---|---|---|
@@ -43,9 +43,9 @@ The current artifacts are the design documents:
 | [`VEKTOR_ROADMAP.md`](VEKTOR_ROADMAP.md) | Staged implementation plan. When and how we know we're done. | ~500 |
 | [`LICENSE`](LICENSE) | MIT license. | 21 |
 
-Implementation begins at **Roadmap Stage 2 / `v0.1.0`** (the skeleton — `cargo build` + CLI parsing + MCP no-op handlers). Until then, this repo is a design-only artifact.
+The `v0.1.0` skeleton implements CLI parsing, config loading, stderr-only tracing, and an rmcp stdio server with 3 no-op tool handlers. It does **not** index, embed, search, or assemble context yet.
 
-If you want to follow along: ⭐ the repo and watch for the `v0.1.0` release.
+If you want to follow along: ⭐ the repo and watch for the `v0.1.0` tag.
 
 ---
 
@@ -79,13 +79,23 @@ Workflow tools (`get_context_for_task` etc.) ship in Stage 3 (`v0.5.0` → `v0.9
 
 ---
 
-## Install (planned, not yet available)
+## Prerequisites
 
-At `v0.1.0`, the supported install path will be source install from the Git tag:
+Source installs build the LanceDB/Arrow stack. `lance-encoding` invokes `protoc` during compilation, so install Protocol Buffers before `cargo install`:
+
+- macOS: `brew install protobuf`
+- Debian/Ubuntu: `apt-get install protobuf-compiler`
+- Fedora: `dnf install protobuf-compiler`
+- Windows: `winget install protobuf` or `scoop install protobuf`
+
+Also install Rust 1.91+; this repo pins 1.91.0 in `rust-toolchain.toml`.
+
+## Install (after the `v0.1.0` tag is published)
+
+At `v0.1.0`, the supported install path is source install from the Git tag. The release has no binary attachments.
 
 ```bash
-# Prerequisites: Rust 1.91+ and protoc
-cargo install --git https://github.com/MachineLearning-Nerd/vektor --tag v0.1.0
+cargo install --git https://github.com/MachineLearning-Nerd/vektor --tag v0.1.0 --locked
 vektor --help
 ```
 
@@ -106,7 +116,7 @@ vektor models download    # one-time ~300MB download of Jina v2
 vektor index /path/to/repo
 ```
 
-None of these work yet. The first block describes the intended `v0.1.0` source-install path; the second block describes the intended UX for `v0.4.0`.
+Only the first block is in `v0.1.0` scope. The second block describes the intended UX for `v0.4.0`.
 
 ---
 
@@ -120,7 +130,7 @@ None of these work yet. The first block describes the intended `v0.1.0` source-i
 
 ## Contributing
 
-The project is still in design phase, so the most useful contribution today is *reviewing the docs*:
+The project is still pre-alpha, so the most useful contribution today is *reviewing the docs and skeleton behavior*:
 
 1. Read [VEKTOR_PRD.md](VEKTOR_PRD.md) and [VEKTOR_ROADMAP.md](VEKTOR_ROADMAP.md)
 2. Open an issue if you spot inconsistencies, missing concerns, or scope problems

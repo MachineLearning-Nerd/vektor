@@ -6,7 +6,7 @@
 **Roadmap stage**: Stage 2 / pre-`v0.1.0`
 **Effort estimate**: M (1–4h)
 **Depends on**: 0.1
-**Blocks**: 1.7
+**Blocks**: 1.7a
 
 ## Objective
 

@@ -5,25 +5,25 @@
 **Roadmap mapping**: Stage 2 / `v0.2.0`
 **PRD mapping**: Section 4.2 (Chunker), Section 12 Week 2 Functions 2.1–2.5, plus a HashStore from Function 1.4
 **Effort estimate**: 3–5 weeks of focused part-time work
-**Status**: ⬜ Not started — per-task files NOT yet written (task 1.7 expands them as part of the v0.1.0 release)
+**Status**: ⬜ Not started — per-task files written in 1.7a release prep; Phase 2 remains blocked until 1.7b publishes `v0.1.0`
 
 ---
 
 ## Task list
 
-> Per-task `.md` files are written by task 1.7 immediately after `v0.1.0` ships. Until then, this list is the authoritative outline.
+> Per-task `.md` files now exist. Do not start Phase 2 implementation until `v0.1.0` is published by task 1.7b.
 
 | ID | Task | Effort | Depends on | Status |
 |---|---|---|---|---|
-| 2.1 | `discover_files(root, config) -> Vec<PathBuf>` — `ignore` crate, respect `.gitignore` + skip lists | M | 1.7 | ⬜ |
-| 2.2 | `HashStore` (state.db SQLite) — get/set/is_changed/get_pending per Function 1.4 | M | 2.1 | ⬜ |
-| 2.3 | `detect_language(path) -> Option<Language>` — extension to tree-sitter Language enum | S | 1.7 | ⬜ |
-| 2.4 | `parse_ast(content, language) -> Tree` — tree-sitter parser construction | S | 2.3 | ⬜ |
-| 2.5 | `extract_chunks_ast` for Python, TypeScript, JavaScript, Rust, Go — with header preservation + sub-chunking at 200 lines | L | 2.4 | ⬜ |
-| 2.6 | `extract_chunks_sliding` — 80-line window 25% overlap for code; 40-line 40% overlap for `.md`/`.txt`/`.rst` | M | 1.7 | ⬜ |
-| 2.7 | `chunk_file(path, content) -> Vec<Chunk>` — top-level dispatcher with content-addressed chunk IDs | M | 2.5, 2.6 | ⬜ |
-| 2.8 | `vektor index --dump-chunks <path>` CLI flag — chunks one file or directory and pretty-prints results | M | 2.2, 2.7 | ⬜ |
-| 2.9 | `v0.2.0` release tag + Phase 3 expansion | M | 2.8 | ⬜ |
+| 2.1 | [`discover_files(root, config) -> Vec<PathBuf>`](01-discover-files.md) — `ignore` crate, respect `.gitignore` + skip lists | M | 1.7b | ⬜ |
+| 2.2 | [`HashStore` (state.db SQLite)](02-hash-store.md) — get/set/is_changed/get_pending per Function 1.4 | M | 2.1 | ⬜ |
+| 2.3 | [`detect_language(path) -> Option<Language>`](03-language-detection.md) — extension to tree-sitter Language enum | S | 1.7b | ⬜ |
+| 2.4 | [`parse_ast(content, language) -> Tree`](04-parse-ast.md) — tree-sitter parser construction | S | 2.3 | ⬜ |
+| 2.5 | [`extract_chunks_ast`](05-ast-chunker.md) for Python, TypeScript, JavaScript, Rust, Go — with header preservation + sub-chunking at 200 lines | L | 2.4 | ⬜ |
+| 2.6 | [`extract_chunks_sliding`](06-sliding-window-fallback.md) — 80-line window 25% overlap for code; 40-line 40% overlap for `.md`/`.txt`/`.rst` | M | 1.7b | ⬜ |
+| 2.7 | [`chunk_file(path, content) -> Vec<Chunk>`](07-chunk-file-dispatcher.md) — top-level dispatcher with content-addressed chunk IDs | M | 2.5, 2.6 | ⬜ |
+| 2.8 | [`vektor index --dump-chunks <path>`](08-dump-chunks-cli.md) CLI flag — chunks one file or directory and pretty-prints results | M | 2.2, 2.7 | ⬜ |
+| 2.9 | [`v0.2.0` release tag + Phase 3 expansion](09-v0.2.0-release.md) | M | 2.8 | ⬜ |
 
 ---
 

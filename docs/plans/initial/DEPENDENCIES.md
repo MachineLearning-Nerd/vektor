@@ -35,10 +35,10 @@ graph TD
     P5 --> P6
 
     P1 -.parallel.-> P6L[Phase 6: vektor init can start early]
-    P0 -.parallel.-> P6C[Phase 6: CI release scaffolding can start early]
+    P1 -.parallel.-> P6C[Phase 6: CI release scaffolding can start after v0.1 publish]
 ```
 
-Phases are mostly sequential — each release tag depends on the previous tag's code landing. Two items in Phase 6 (`vektor init` and CI release pipeline) can be drafted in parallel with later phases since they don't depend on the engine internals.
+Phases are mostly sequential — each release tag depends on the previous tag's code landing. Two items in Phase 6 (`vektor init` and CI release pipeline) can be drafted in parallel with later engine phases once their dependencies are met.
 
 ---
 
@@ -59,15 +59,16 @@ graph TD
     P1_4[1.4 CLI args — clap derive]
     P1_5[1.5 tracing init]
     P1_6[1.6 MCP no-op handlers — rmcp 1.7]
-    P1_7[1.7 v0.1.0 release tag]
+    P1_7A[1.7a release prep docs + notes]
+    P1_7B[1.7b publish v0.1.0 tag + release]
 
     P0_1 --> P0_2
     P0_1 --> P0_3
     P0_1 --> P0_4
     P0_1 --> P1_1
-    P0_2 --> P1_7
+    P0_2 --> P1_7A
     P0_3 --> P1_1
-    P0_4 --> P1_7
+    P0_4 --> P1_7A
 
     P1_1 --> P1_2
     P1_1 --> P1_4
@@ -75,7 +76,8 @@ graph TD
     P1_3 --> P1_4
     P1_4 --> P1_5
     P1_5 --> P1_6
-    P1_6 --> P1_7
+    P1_6 --> P1_7A
+    P1_7A --> P1_7B
 ```
 
 ---
@@ -87,32 +89,33 @@ graph TD
 | Task | Depends on | Blocks | Status |
 |---|---|---|---|
 | 0.1 cargo init + Cargo.toml | (none) | 0.2, 0.3, 0.4, 1.1 | ✅ `a3a2c2a` |
-| 0.2 CI skeleton | 0.1 | 1.7 | ✅ `73ed9d9` + protoc fix `080305d` |
+| 0.2 CI skeleton | 0.1 | 1.7a | ✅ `73ed9d9` + protoc fix `080305d` |
 | 0.3 Pre-commit hooks | 0.1 | 1.1 | ✅ `689d5b2` |
-| 0.4 cargo-deny baseline | 0.1 | 1.7 | ✅ `08361cc` |
+| 0.4 cargo-deny baseline | 0.1 | 1.7a | ✅ `08361cc` |
 
 ### Phase 1 — Skeleton
 
 | Task | Depends on | Blocks | Status |
 |---|---|---|---|
-| 1.1 main entrypoint | 0.1, 0.3 | 1.2, 1.4 | 🟢 |
-| 1.2 error module | 1.1 | 1.3 | 🟡 |
-| 1.3 config module | 1.2 | 1.4 | 🟡 |
-| 1.4 CLI args | 1.1, 1.3 | 1.5 | 🟡 |
-| 1.5 tracing init | 1.4 | 1.6 | 🟡 |
-| 1.6 MCP no-op handlers | 1.5 | 1.7 | 🟡 |
-| 1.7 v0.1.0 release | 0.2, 0.4, 1.6 | 2.* | 🟡 |
+| 1.1 main entrypoint | 0.1, 0.3 | 1.2, 1.4 | ✅ pending commit |
+| 1.2 error module | 1.1 | 1.3 | ✅ pending commit |
+| 1.3 config module | 1.2 | 1.4 | ✅ pending commit |
+| 1.4 CLI args | 1.1, 1.3 | 1.5 | ✅ pending commit |
+| 1.5 tracing init | 1.4 | 1.6 | ✅ pending commit |
+| 1.6 MCP no-op handlers | 1.5 | 1.7a | ✅ pending commit |
+| 1.7a release prep docs + notes | 0.2, 0.4, 1.6 | 1.7b | ✅ pending commit |
+| 1.7b publish v0.1.0 release | 1.7a, combined review | 2.* | 🟢 (requires explicit publish authorization) |
 
-### Phase 2 — Discovery + Chunking (task list — per-task files TBD)
+### Phase 2 — Discovery + Chunking
 
 | Task | Depends on | Blocks | Status |
 |---|---|---|---|
-| 2.1 discover_files() | 1.7 | 2.2 | 🟡 |
+| 2.1 discover_files() | 1.7b | 2.2 | 🟡 |
 | 2.2 HashStore + SQLite state.db | 2.1 | 2.7 | 🟡 |
-| 2.3 language detection | 1.7 | 2.4 | 🟡 |
+| 2.3 language detection | 1.7b | 2.4 | 🟡 |
 | 2.4 AST parse (tree-sitter) | 2.3 | 2.5 | 🟡 |
 | 2.5 AST chunker (5 langs) + header preservation | 2.4 | 2.7 | 🟡 |
-| 2.6 sliding-window fallback | 1.7 | 2.7 | 🟡 |
+| 2.6 sliding-window fallback | 1.7b | 2.7 | 🟡 |
 | 2.7 chunk_file() dispatcher | 2.5, 2.6 | 2.8 | 🟡 |
 | 2.8 `--dump-chunks` CLI flag | 2.2, 2.7 | 2.9 | 🟡 |
 | 2.9 v0.2.0 release | 2.8 | 3.* | 🟡 |
@@ -170,7 +173,7 @@ graph TD
 | Task | Depends on | Blocks | Status |
 |---|---|---|---|
 | 6.1 `vektor init` MCP config writer | 4.7 | 6.5 | 🟡 |
-| 6.2 Release pipeline (signed binaries + checksums) | 0.2, 1.7 | 6.5 | 🟢 (can start after 0.2) |
+| 6.2 Release pipeline (signed binaries + checksums) | 0.2, 1.7b | 6.5 | 🟡 |
 | 6.3 Lightweight benchmark gate (20 queries vs tokio) | 5.13 | 6.4 | 🟡 |
 | 6.4 BENCHMARKS.md baseline | 6.3 | 6.5 | 🟡 |
 | 6.5 v0.4.0 release tag | 5.13, 6.1, 6.2, 6.4 | (stage 3) | 🟡 |
@@ -182,11 +185,11 @@ graph TD
 The longest dependency chain (the project bottleneck):
 
 ```
-0.1 → 1.1 → 1.2 → 1.3 → 1.4 → 1.5 → 1.6 → 1.7 → 2.1 → 2.2 → 2.7 → 2.8 → 2.9 →
+0.1 → 1.1 → 1.2 → 1.3 → 1.4 → 1.5 → 1.6 → 1.7a → 1.7b → 2.1 → 2.2 → 2.7 → 2.8 → 2.9 →
 3.1 → 3.2 → 3.3 → 3.5 → 3.7 → 3.12 → 4.1 → 4.5 → 5.5 → 5.6 → 5.13 → 6.5
 ```
 
-That's **25 sequential tasks** on the critical path. Everything else parallelizes around them.
+That's **26 sequential tasks** on the critical path. Everything else parallelizes around them.
 
 Tasks that can start early (off-critical-path, useful for parallel work):
 - **0.2 / 0.3 / 0.4** after 0.1 lands (independent)
@@ -194,7 +197,7 @@ Tasks that can start early (off-critical-path, useful for parallel work):
 - **3.10 (SecretDetector)** after 2.1, parallel with 2.2–2.9
 - **3.11 (`vektor models download`)** after 3.2, parallel with 3.6–3.9
 - **6.1 (`vektor init`)** after 4.7, parallel with most of Phase 5
-- **6.2 (release pipeline)** after 0.2 + 1.7, parallel with all of Phases 2–5
+- **6.2 (release pipeline)** after 0.2 + 1.7b, parallel with all of Phases 2–5
 
 ---
 

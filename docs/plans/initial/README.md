@@ -11,20 +11,20 @@ This plan covers **Roadmap Stage 2** only (see [`VEKTOR_ROADMAP.md`](../../../VE
 | Phase | Release tag | Status | Notes |
 |---|---|---|---|
 | Phase 0 — Scaffolding | (none — pre-`v0.1.0`) | ✅ **Done** (4 of 4) | Cargo init ✅ (`a3a2c2a`); hooks ✅ (`689d5b2`); deny ✅ (`08361cc`); CI ✅ (`73ed9d9` + `080305d`); GitHub repo at https://github.com/MachineLearning-Nerd/vektor (private). |
-| Phase 1 — Skeleton | `v0.1.0` | ⬜ Not started | Binary entry point, config, error types, no-op MCP handlers, README/LICENSE/tracing wired. |
-| Phase 2 — Discovery + Chunking | `v0.2.0` | ⬜ Not started | File walking, hash store, AST chunker, sliding fallback. |
+| Phase 1 — Skeleton | `v0.1.0` | 🟡 Implementation/release prep complete; publish pending | Binary entry point, config, error types, CLI, tracing, and no-op MCP handlers implemented locally. `1.7b` still must push/tag/release. |
+| Phase 2 — Discovery + Chunking | `v0.2.0` | ⬜ Not started | Per-task files written; blocked until `v0.1.0` is published. |
 | Phase 3 — Embedding + Storage | `v0.3.0` | ⬜ Not started | ONNX/OpenAI/Ollama backends, LanceDB store, secret-aware indexing (B1.2/B1.5). |
 | Phase 4 — Search + MCP | (interim) | ⬜ Not started | Tantivy BM25, RRF fusion, MCP tool dispatch for 3 primary tools. |
 | Phase 5 — Context Assembly | `v0.4.0` | ⬜ Not started | TokenCounter, Deduplicator, RelatedExpander, QueryCache, ShallowIndexer, RecencyTracker. |
 | Phase 6 — Launch Polish | `v0.4.0` | ⬜ Not started | `vektor init`, signed release pipeline, lightweight benchmark gate, `BENCHMARKS.md` baseline. |
 
-**Active phase**: Phase 1 (Phase 0 complete; task 1.1 is the next unblocked work).
+**Active phase**: Phase 1 publish gate (`1.7b`) — Phase 2 remains blocked until `v0.1.0` is tagged and released.
 
 ---
 
 ## Phase summaries
 
-Each phase has a `phase-N/README.md` with the full task list. Phases 0 and 1 have fully-detailed per-task files; phases 2–6 currently have task lists only and will be expanded before each phase begins.
+Each phase has a `phase-N/README.md` with the full task list. Phases 0, 1, and 2 have task-level files; phases 3–6 currently have task lists only and will be expanded before each phase begins.
 
 ### Phase 0 — Scaffolding
 **Goal**: `git clone && cargo check` succeeds. No application code yet, but the build pipeline, CI, and pre-commit hooks all work.
@@ -32,7 +32,7 @@ Each phase has a `phase-N/README.md` with the full task list. Phases 0 and 1 hav
 
 ### Phase 1 — Skeleton (`v0.1.0`)
 **Goal**: `vektor index` and `vektor serve` parse CLI args, `vektor serve` registers a no-op MCP server with rmcp 1.7. README and LICENSE in place. CI green on macOS + Linux.
-**Tasks**: 7 ([`phase-1-skeleton/README.md`](phase-1-skeleton/README.md))
+**Tasks**: 8 after splitting 1.7 into release prep and publish ([`phase-1-skeleton/README.md`](phase-1-skeleton/README.md))
 
 ### Phase 2 — Discovery + Chunking (`v0.2.0`)
 **Goal**: `vektor index <repo>` walks files (respecting `.gitignore`), tree-sitter chunks 5 languages with header preservation + sub-chunking, sliding-window fallback for other types. `--dump-chunks` shows what gets indexed.
@@ -90,9 +90,19 @@ docs/plans/initial/
 │   ├── 04-cli-args.md                  Task 1.4
 │   ├── 05-tracing-init.md              Task 1.5
 │   ├── 06-mcp-noop-handlers.md         Task 1.6
-│   └── 07-v0.1.0-release.md            Task 1.7
+│   ├── 07-v0.1.0-release.md            Task 1.7a release prep
+│   └── 08-v0.1.0-publish.md            Task 1.7b release publish
 ├── phase-2-discovery-chunking/
-│   └── README.md                       Task list only — per-task files written before Phase 2 begins
+│   ├── README.md
+│   ├── 01-discover-files.md
+│   ├── 02-hash-store.md
+│   ├── 03-language-detection.md
+│   ├── 04-parse-ast.md
+│   ├── 05-ast-chunker.md
+│   ├── 06-sliding-window-fallback.md
+│   ├── 07-chunk-file-dispatcher.md
+│   ├── 08-dump-chunks-cli.md
+│   └── 09-v0.2.0-release.md
 ├── phase-3-embedding-storage/
 │   └── README.md
 ├── phase-4-search-mcp/
@@ -107,15 +117,15 @@ docs/plans/initial/
 
 ## Pre-planned vs just-in-time
 
-Phases 0 and 1 are **pre-planned at the task level** because they happen next and the work is well-understood.
+Phases 0, 1, and 2 are **pre-planned at the task level**. Phase 2 per-task files were added during the 1.7a release-prep step, but Phase 2 implementation still waits for 1.7b to publish `v0.1.0`.
 
-Phases 2–6 are **planned at the phase level** with task lists only. Per-task files are written **just before each phase begins** so that:
+Phases 3–6 are **planned at the phase level** with task lists only. Later per-task files are written **just before each phase begins** so that:
 
 1. Lessons from earlier phases inform later tasks (we won't pre-write task 5.7 today based on assumptions we'll find wrong in Phase 3)
 2. The plan stays a *tool*, not a stale document
 3. Reviewers can validate the format on Phases 0/1 before we commit to per-task details for all 50+ tasks
 
-When Phase 2 begins (after Phase 1 ships `v0.1.0`), the first action is "expand `phase-2-discovery-chunking/` from task list to per-task files." That expansion is itself a task — see Phase 1's task `1.7` for the trigger.
+The Phase 2 task files were expanded during `1.7a` release prep. Phase 2 implementation still waits for `1.7b` to publish `v0.1.0`.
 
 ---
 
