@@ -13,6 +13,9 @@ pub enum VektorError {
     #[error("not implemented: {0}")]
     NotImplemented(&'static str),
 
+    #[error("state error: {0}")]
+    State(String),
+
     #[error("MCP protocol error: {0}")]
     Mcp(String),
 }

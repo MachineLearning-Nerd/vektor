@@ -6,6 +6,7 @@ mod config;
 mod discovery;
 mod error;
 mod mcp;
+mod state;
 mod telemetry;
 
 #[tokio::main]
