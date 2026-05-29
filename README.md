@@ -5,7 +5,7 @@
 > 100% your machine. 100% open source.
 
 [![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE)
-[![Status](https://img.shields.io/badge/status-v0.1.0%20skeleton%20ready-yellow.svg)](VEKTOR_ROADMAP.md)
+[![Status](https://img.shields.io/badge/status-v0.2.0%20implemented%20locally-yellow.svg)](VEKTOR_ROADMAP.md)
 [![PRD](https://img.shields.io/badge/PRD-v2.5-blue.svg)](VEKTOR_PRD.md)
 
 ---
@@ -33,9 +33,9 @@ The first three tools (`index_codebase`, `search_code`, `get_context_for_prompt`
 
 ## Status
 
-**Pre-alpha — `v0.1.0` skeleton ready locally; release publish pending.**
+**Pre-alpha — `v0.2.0` discovery/chunking implemented locally; release publish pending.**
 
-The current artifacts are the design documents plus a runnable Rust skeleton:
+The current artifacts are the design documents plus a runnable Rust implementation through discovery and chunking:
 
 | Document | Purpose | Lines |
 |---|---|---|
@@ -43,9 +43,9 @@ The current artifacts are the design documents plus a runnable Rust skeleton:
 | [`VEKTOR_ROADMAP.md`](VEKTOR_ROADMAP.md) | Staged implementation plan. When and how we know we're done. | ~500 |
 | [`LICENSE`](LICENSE) | MIT license. | 21 |
 
-The `v0.1.0` skeleton implements CLI parsing, config loading, stderr-only tracing, and an rmcp stdio server with 3 no-op tool handlers. It does **not** index, embed, search, or assemble context yet.
+The current codebase implements CLI parsing, config loading, stderr-only tracing, an rmcp stdio server with 3 no-op tool handlers, file discovery, file/chunk hashing, AST/sliding-window chunking, and Phase 2 `vektor index` behavior. It does **not** embed, search, write LanceDB vectors, or assemble context yet.
 
-If you want to follow along: ⭐ the repo and watch for the `v0.1.0` tag.
+If you want to follow along: ⭐ the repo and watch for the first approved release tags.
 
 ---
 

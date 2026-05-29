@@ -12,10 +12,28 @@
 
 Implement `discover_files(root, config) -> Vec<PathBuf>` using the `ignore` crate. It must respect `.gitignore`, skip obvious generated/cache directories, enforce `config.index.max_file_size_kb`, and return deterministic sorted paths.
 
-## Acceptance Criteria
+## Inputs (must exist before starting)
+
+- Phase 1 `vektor index` CLI stub and `Config` module
+- `ignore` crate dependency from the project manifest
+- `config.index.max_file_size_kb` default from PRD Section 6.3
+
+## Outputs (must exist after completion)
+
+- File-discovery module callable by later Phase 2 indexing tasks
+- Tests proving gitignore handling, skip-list handling, max-size filtering, and deterministic ordering
+
+## Approach
+
+- Use `ignore::WalkBuilder` rooted at the requested directory.
+- Layer Vektor's generated/cache directory skips on top of the ignore crate's gitignore handling.
+- Filter by configured max file size before returning paths.
+- Normalize returned paths into a deterministic sorted order.
+
+## Acceptance criteria
 
 - [ ] Walks files under a root path with nested `.gitignore` support
-- [ ] Skips `.git`, `node_modules`, `__pycache__`, and build outputs
+- [ ] Skips `.git`, `node_modules`, `__pycache__`, `target`, `dist`, `build`, and similar generated/cache outputs
 - [ ] Skips files larger than `config.index.max_file_size_kb`
 - [ ] Returns sorted paths for deterministic tests
 - [ ] Has unit/integration tests using a temp fixture repo

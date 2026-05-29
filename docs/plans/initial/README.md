@@ -11,14 +11,14 @@ This plan covers **Roadmap Stage 2** only (see [`VEKTOR_ROADMAP.md`](../../../VE
 | Phase | Release tag | Status | Notes |
 |---|---|---|---|
 | Phase 0 — Scaffolding | (none — pre-`v0.1.0`) | ✅ **Done** (4 of 4) | Cargo init ✅ (`a3a2c2a`); hooks ✅ (`689d5b2`); deny ✅ (`08361cc`); CI ✅ (`73ed9d9` + `080305d`); GitHub repo at https://github.com/MachineLearning-Nerd/vektor (private). |
-| Phase 1 — Skeleton | `v0.1.0` | 🟡 Implementation/release prep complete; publish pending | Binary entry point, config, error types, CLI, tracing, and no-op MCP handlers implemented locally. `1.7b` still must push/tag/release. |
-| Phase 2 — Discovery + Chunking | `v0.2.0` | ⬜ Not started | Per-task files written; blocked until `v0.1.0` is published. |
-| Phase 3 — Embedding + Storage | `v0.3.0` | ⬜ Not started | ONNX/OpenAI/Ollama backends, LanceDB store, secret-aware indexing (B1.2/B1.5). |
+| Phase 1 — Skeleton | `v0.1.0` | 🟡 Tag/release published; public install gate pending | Binary entry point, config, error types, CLI, tracing, and no-op MCP handlers implemented. `v0.1.0` tag + GitHub Release exist; repo visibility still blocks unauthenticated source install. |
+| Phase 2 — Discovery + Chunking | `v0.2.0` | ✅ Implementation complete locally; publish pending | File discovery, HashStore, AST/sliding chunking, and Phase 2 `vektor index` behavior are implemented on `phase-2-discovery-chunking`. Tag/GitHub Release require explicit approval. |
+| Phase 3 — Embedding + Storage | `v0.3.0` | ⬜ Not started | Readiness docs only. Per-task expansion and embedding/storage work remain blocked until the Phase 2 publish gate is approved. |
 | Phase 4 — Search + MCP | (interim) | ⬜ Not started | Tantivy BM25, RRF fusion, MCP tool dispatch for 3 primary tools. |
 | Phase 5 — Context Assembly | `v0.4.0` | ⬜ Not started | TokenCounter, Deduplicator, RelatedExpander, QueryCache, ShallowIndexer, RecencyTracker. |
 | Phase 6 — Launch Polish | `v0.4.0` | ⬜ Not started | `vektor init`, signed release pipeline, lightweight benchmark gate, `BENCHMARKS.md` baseline. |
 
-**Active phase**: Phase 1 publish gate (`1.7b`) — Phase 2 remains blocked until `v0.1.0` is tagged and released.
+**Active phase**: Phase 2 release-readiness docs. Publish actions for `v0.1.0`/`v0.2.0` remain explicitly gated; Phase 3 implementation has not started.
 
 ---
 
@@ -117,7 +117,7 @@ docs/plans/initial/
 
 ## Pre-planned vs just-in-time
 
-Phases 0, 1, and 2 are **pre-planned at the task level**. Phase 2 per-task files were added during the 1.7a release-prep step, but Phase 2 implementation still waits for 1.7b to publish `v0.1.0`.
+Phases 0, 1, and 2 are **pre-planned at the task level**. Phase 2 implementation is now complete locally on `phase-2-discovery-chunking`, but publishing remains a separate explicit action.
 
 Phases 3–6 are **planned at the phase level** with task lists only. Later per-task files are written **just before each phase begins** so that:
 
@@ -125,7 +125,7 @@ Phases 3–6 are **planned at the phase level** with task lists only. Later per-
 2. The plan stays a *tool*, not a stale document
 3. Reviewers can validate the format on Phases 0/1 before we commit to per-task details for all 50+ tasks
 
-The Phase 2 task files were expanded during `1.7a` release prep. Phase 2 implementation still waits for `1.7b` to publish `v0.1.0`.
+The Phase 2 task files were expanded during `1.7a` release prep. Phase 3 remains phase-level only until its per-task files are expanded after the Phase 2 publish gate is approved.
 
 ---
 

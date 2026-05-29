@@ -57,7 +57,7 @@ Each arrow is a hard gate — the next stage does not begin until the previous s
 
 ---
 
-## Current State (2026-05-28)
+## Current State (2026-05-29)
 
 | Item | Status |
 |---|---|
@@ -78,9 +78,11 @@ Each arrow is a hard gate — the next stage does not begin until the previous s
 | GitHub Actions CI workflow (task 0.2) | ✅ Done (commits `73ed9d9` + protoc fix `080305d`) — green on macOS+Linux |
 | GitHub repo created and pushed | ✅ Private at https://github.com/MachineLearning-Nerd/vektor |
 | **Phase 0 (Scaffolding)** | ✅ **DONE — all 4 tasks complete** |
-| Phase 1 skeleton implementation | ✅ Done in working tree (pending commit/tag): async entrypoint, error/config modules, clap CLI, tracing, rmcp stdio no-op handlers, tests |
-| Phase 1 release prep (`1.7a`) | ✅ Done in working tree: README install prerequisites, draft release notes, Phase 2 task files, tracker updates |
-| `v0.1.0` publish (`1.7b`) | ⬜ Pending explicit release action: push final commit, wait for `ci.yml`, make repo public if required, tag, GitHub Release |
+| Phase 1 skeleton implementation | ✅ Done: async entrypoint, error/config modules, clap CLI, tracing, rmcp stdio no-op handlers, tests |
+| Phase 1 release prep (`1.7a`) | ✅ Done: README install prerequisites, draft release notes, Phase 2 task files, tracker updates |
+| `v0.1.0` publish (`1.7b`) | 🟡 Tag + GitHub Release exist; CI is green on the tag commit. Repo remains private, so unauthenticated source install is still gated by visibility. |
+| Phase 2 discovery + chunking implementation | ✅ Done locally on `phase-2-discovery-chunking`: file discovery, HashStore, AST/sliding chunking, Phase 2 `vektor index` behavior |
+| `v0.2.0` publish | ⬜ Pending explicit release action: push final Phase 2 commit, wait for `ci.yml`, tag, GitHub Release |
 
 ---
 
@@ -128,7 +130,7 @@ Bring the PRD into a state where every implementation conversation downstream pr
 **PRD reference**: Sections 4, 6, 11, 12 (Weeks 1–6 of PRD Phase 1) + B6 from review + brought-forward items (B1, `vektor init`, C8.1, C8.2, lightweight benchmark, README/LICENSE)
 **Depends on**: Stage 1 complete
 **Effort**: Large (timeline lifted; estimate 14–18 weeks part-time for a Rust learner — slightly larger than v2.5 estimate to absorb the brought-forward items)
-**Status**: In progress — `v0.1.0` skeleton implemented locally; publish pending
+**Status**: In progress — `v0.2.0` discovery/chunking implemented locally; publish actions remain explicitly gated
 
 ### Goal
 A working MCP server that can index a real codebase, perform hybrid BM25 + semantic search, and assemble token-budgeted context — **with the security, distribution, and launch prerequisites a stranger needs to actually use the binary on day one.** No more "alpha that only the author can run."
