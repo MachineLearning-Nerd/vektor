@@ -13,6 +13,9 @@ pub enum VektorError {
     #[error("not implemented: {0}")]
     NotImplemented(&'static str),
 
+    #[error("parse error: {0}")]
+    Parse(String),
+
     #[error("state error: {0}")]
     State(String),
 

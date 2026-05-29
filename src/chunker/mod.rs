@@ -1,5 +1,10 @@
 use std::path::Path;
 
+pub mod ast;
+
+#[allow(unused_imports)]
+pub use ast::parse_ast;
+
 #[allow(dead_code)]
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Language {
