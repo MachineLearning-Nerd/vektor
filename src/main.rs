@@ -3,6 +3,7 @@ use clap::Parser;
 
 mod cli;
 mod config;
+mod discovery;
 mod error;
 mod mcp;
 mod telemetry;
