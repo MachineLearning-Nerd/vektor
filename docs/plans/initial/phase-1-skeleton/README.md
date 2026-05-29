@@ -5,7 +5,7 @@
 **Roadmap mapping**: Stage 2 / `v0.1.0`
 **PRD mapping**: Section 12 Week 1 — **Function 1.1 only** (binary entry point). PRD Functions 1.2 (`discover_files`), 1.3 (`hash_file`), 1.4 (`HashStore`) are intentionally deferred to Phase 2 (tasks 2.1 and 2.2) because v0.1.0 ships only the CLI/MCP skeleton — no real indexing yet. Plus brought-forward launch prereqs (CI matrix lite, README, LICENSE — already shipped in Phase 0).
 **Effort estimate**: ~3 weeks of focused part-time work (M/L per task; release polish takes the longest)
-**Status**: 🟡 Implementation + release prep complete in working tree; `1.7b` publish is pending explicit release action
+**Status**: 🟡 `v0.1.0` tag + GitHub Release are published; public unauthenticated install remains gated by repository visibility.
 
 ---
 
@@ -38,7 +38,7 @@ After `1.7a` is clean, run one combined Phase 1 review before `1.7b`. `1.7b` is 
 | 1.5 | [tracing init](05-tracing-init.md) | S | 1.4 | ✅ | `16a8c77` |
 | 1.6 | [MCP no-op handlers — rmcp 1.7](06-mcp-noop-handlers.md) | L | 1.5 | ✅ | `16a8c77` |
 | 1.7a | [release prep docs + notes](07-v0.1.0-release.md) | S | 0.2, 0.4, 1.6 | ✅ | `16a8c77` |
-| 1.7b | [publish v0.1.0 tag + GitHub Release](08-v0.1.0-publish.md) | S | 1.7a + combined review | ⬜ | — |
+| 1.7b | [publish v0.1.0 tag + GitHub Release](08-v0.1.0-publish.md) | S | 1.7a + combined review | 🟡 | `v0.1.0` tag/release |
 
 ---
 
@@ -58,11 +58,11 @@ Implementation gates:
 
 Publish gates owned by `1.7b`:
 
-- [ ] Final release commit pushed to `origin/main`
-- [ ] Latest `ci.yml` run for the release commit explicitly concludes `success`
+- [x] Final release commit pushed to `origin/main`
+- [x] Latest `ci.yml` run for the release commit explicitly concludes `success`
 - [ ] Repository visibility is public before the unauthenticated `cargo install --git ... --tag v0.1.0 --locked` gate
-- [ ] Git tag `v0.1.0` exists and is pushed to `origin`
-- [ ] GitHub Release `v0.1.0` exists with zero binary attachments
+- [x] Git tag `v0.1.0` exists and is pushed to `origin`
+- [x] GitHub Release `v0.1.0` exists with zero binary attachments
 - [ ] `cargo install --git https://github.com/MachineLearning-Nerd/vektor --tag v0.1.0 --locked` succeeds on a fresh unauthenticated machine with `protoc` installed
 
 ---

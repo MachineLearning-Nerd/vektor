@@ -43,7 +43,7 @@ The current artifacts are the design documents plus a runnable Rust implementati
 | [`VEKTOR_ROADMAP.md`](VEKTOR_ROADMAP.md) | Staged implementation plan. When and how we know we're done. | ~500 |
 | [`LICENSE`](LICENSE) | MIT license. | 21 |
 
-The current branch implements CLI parsing, config loading, stderr-only tracing, an rmcp stdio server with 3 no-op tool handlers, file discovery, file/chunk hashing, AST/sliding-window chunking, and Phase 2 `vektor index` behavior. It does **not** embed, search, write LanceDB vectors, or assemble context yet.
+The current codebase implements CLI parsing, config loading, stderr-only tracing, an rmcp stdio server with 3 no-op tool handlers, file discovery, file/chunk hashing, AST/sliding-window chunking, and Phase 2 `vektor index` behavior. It does **not** embed, search, write LanceDB vectors, or assemble context yet.
 
 If you want to follow along: ⭐ the repo and watch for the first approved release tags.
 

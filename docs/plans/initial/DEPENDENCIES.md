@@ -104,7 +104,7 @@ graph TD
 | 1.5 tracing init | 1.4 | 1.6 | ✅ `16a8c77` |
 | 1.6 MCP no-op handlers | 1.5 | 1.7a | ✅ `16a8c77` |
 | 1.7a release prep docs + notes | 0.2, 0.4, 1.6 | 1.7b | ✅ `16a8c77` |
-| 1.7b publish v0.1.0 release | 1.7a, combined review | 2.* | 🟢 (requires explicit publish authorization) |
+| 1.7b publish v0.1.0 release | 1.7a, combined review | 2.* | 🟡 tag/release done; public install gate pending repo visibility |
 
 ### Phase 2 — Discovery + Chunking
 

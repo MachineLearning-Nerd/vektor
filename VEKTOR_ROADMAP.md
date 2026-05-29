@@ -78,9 +78,9 @@ Each arrow is a hard gate — the next stage does not begin until the previous s
 | GitHub Actions CI workflow (task 0.2) | ✅ Done (commits `73ed9d9` + protoc fix `080305d`) — green on macOS+Linux |
 | GitHub repo created and pushed | ✅ Private at https://github.com/MachineLearning-Nerd/vektor |
 | **Phase 0 (Scaffolding)** | ✅ **DONE — all 4 tasks complete** |
-| Phase 1 skeleton implementation | ✅ Done in working tree (pending commit/tag): async entrypoint, error/config modules, clap CLI, tracing, rmcp stdio no-op handlers, tests |
-| Phase 1 release prep (`1.7a`) | ✅ Done in working tree: README install prerequisites, draft release notes, Phase 2 task files, tracker updates |
-| `v0.1.0` publish (`1.7b`) | ⬜ Pending explicit release action: push final commit, wait for `ci.yml`, make repo public if required, tag, GitHub Release |
+| Phase 1 skeleton implementation | ✅ Done: async entrypoint, error/config modules, clap CLI, tracing, rmcp stdio no-op handlers, tests |
+| Phase 1 release prep (`1.7a`) | ✅ Done: README install prerequisites, draft release notes, Phase 2 task files, tracker updates |
+| `v0.1.0` publish (`1.7b`) | 🟡 Tag + GitHub Release exist; CI is green on the tag commit. Repo remains private, so unauthenticated source install is still gated by visibility. |
 | Phase 2 discovery + chunking implementation | ✅ Done locally on `phase-2-discovery-chunking`: file discovery, HashStore, AST/sliding chunking, Phase 2 `vektor index` behavior |
 | `v0.2.0` publish | ⬜ Pending explicit release action: push final Phase 2 commit, wait for `ci.yml`, tag, GitHub Release |
 
