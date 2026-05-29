@@ -104,7 +104,7 @@ graph TD
 | 1.5 tracing init | 1.4 | 1.6 | ✅ `16a8c77` |
 | 1.6 MCP no-op handlers | 1.5 | 1.7a | ✅ `16a8c77` |
 | 1.7a release prep docs + notes | 0.2, 0.4, 1.6 | 1.7b | ✅ `16a8c77` |
-| 1.7b publish v0.1.0 release | 1.7a, combined review | 2.* | 🟡 tag/release done; public install gate pending repo visibility |
+| 1.7b publish v0.1.0 release | 1.7a, combined review | 2.* | ✅ tag + GitHub Release done (private). Public flip + unauthenticated install gate deferred to launch (`v0.4.0`) by decision — tracked under Phase 6. |
 
 ### Phase 2 — Discovery + Chunking
 
@@ -179,6 +179,7 @@ Phase 3 is not implementation-ready yet. Even though Phase 2 code is complete lo
 | 6.3 Lightweight benchmark gate (20 queries vs tokio) | 5.13 | 6.4 | 🟡 |
 | 6.4 BENCHMARKS.md baseline | 6.3 | 6.5 | 🟡 |
 | 6.5 v0.4.0 release tag | 5.13, 6.1, 6.2, 6.4 | (stage 3) | 🟡 |
+| 6.6 **go public** (repo visibility flip + unauthenticated install validation) | 6.5 | (launch) | 🟡 deferred here from 1.7b per the release-visibility decision; one-way, needs explicit auth; curate `VEKTOR_PRD.md` first |
 
 ---
 

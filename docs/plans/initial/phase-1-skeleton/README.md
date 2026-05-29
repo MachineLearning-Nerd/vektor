@@ -5,7 +5,7 @@
 **Roadmap mapping**: Stage 2 / `v0.1.0`
 **PRD mapping**: Section 12 Week 1 — **Function 1.1 only** (binary entry point). PRD Functions 1.2 (`discover_files`), 1.3 (`hash_file`), 1.4 (`HashStore`) are intentionally deferred to Phase 2 (tasks 2.1 and 2.2) because v0.1.0 ships only the CLI/MCP skeleton — no real indexing yet. Plus brought-forward launch prereqs (CI matrix lite, README, LICENSE — already shipped in Phase 0).
 **Effort estimate**: ~3 weeks of focused part-time work (M/L per task; release polish takes the longest)
-**Status**: 🟡 `v0.1.0` tag + GitHub Release are published; public unauthenticated install remains gated by repository visibility.
+**Status**: ✅ Done — `v0.1.0` tag + GitHub Release published (private). Repo stays **private until launch (`v0.4.0`)** by deliberate decision; the public flip + unauthenticated source-install gate are deferred to the launch milestone (tracked as Phase 6.6), not pending.
 
 ---
 
@@ -38,7 +38,7 @@ After `1.7a` is clean, run one combined Phase 1 review before `1.7b`. `1.7b` is 
 | 1.5 | [tracing init](05-tracing-init.md) | S | 1.4 | ✅ | `16a8c77` |
 | 1.6 | [MCP no-op handlers — rmcp 1.7](06-mcp-noop-handlers.md) | L | 1.5 | ✅ | `16a8c77` |
 | 1.7a | [release prep docs + notes](07-v0.1.0-release.md) | S | 0.2, 0.4, 1.6 | ✅ | `16a8c77` |
-| 1.7b | [publish v0.1.0 tag + GitHub Release](08-v0.1.0-publish.md) | S | 1.7a + combined review | 🟡 | `v0.1.0` tag/release |
+| 1.7b | [publish v0.1.0 tag + GitHub Release](08-v0.1.0-publish.md) | S | 1.7a + combined review | ✅ | `v0.1.0` tag + release (private; public flip → Phase 6.6) |
 
 ---
 
@@ -60,10 +60,10 @@ Publish gates owned by `1.7b`:
 
 - [x] Final release commit pushed to `origin/main`
 - [x] Latest `ci.yml` run for the release commit explicitly concludes `success`
-- [ ] Repository visibility is public before the unauthenticated `cargo install --git ... --tag v0.1.0 --locked` gate
+- [→] **Deferred to launch (`v0.4.0`, Phase 6.6)**: repository visibility public before the unauthenticated `cargo install --git ... --tag v0.1.0 --locked` gate — repo intentionally private until launch
 - [x] Git tag `v0.1.0` exists and is pushed to `origin`
 - [x] GitHub Release `v0.1.0` exists with zero binary attachments
-- [ ] `cargo install --git https://github.com/MachineLearning-Nerd/vektor --tag v0.1.0 --locked` succeeds on a fresh unauthenticated machine with `protoc` installed
+- [→] **Deferred to launch (`v0.4.0`, Phase 6.6)**: `cargo install --git https://github.com/MachineLearning-Nerd/vektor --tag v0.1.0 --locked` on a fresh unauthenticated machine with `protoc` (cannot be validated while the repo is private)
 
 ---
 
@@ -86,10 +86,12 @@ Publish gates owned by `1.7b`:
 
 ---
 
-## When This Phase Completes
+## Phase status — COMPLETE
 
-1. Run combined Phase 1 review and full verification.
-2. Commit the release-prep working tree.
-3. Push the final release commit and wait for `ci.yml` success on that exact commit.
-4. Make the GitHub repo public if still private.
-5. Tag `v0.1.0`, push the tag, and create the notes-only GitHub Release.
+Phase 1 shipped: implementation in `16a8c77`, tracker finalized in `b4517cf`,
+`v0.1.0` tagged on the CI-validated commit, and a notes-only GitHub Release created.
+
+**The repo is intentionally still private.** Making it public is NOT a Phase 1
+action — it is deferred to the launch milestone (`v0.4.0`, tracked as Phase 6.6)
+by deliberate decision, and only then can the unauthenticated `cargo install`
+gate be validated. See the release-visibility decision in `VEKTOR_ROADMAP.md`.

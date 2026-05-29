@@ -80,9 +80,11 @@ Each arrow is a hard gate — the next stage does not begin until the previous s
 | **Phase 0 (Scaffolding)** | ✅ **DONE — all 4 tasks complete** |
 | Phase 1 skeleton implementation | ✅ Done: async entrypoint, error/config modules, clap CLI, tracing, rmcp stdio no-op handlers, tests |
 | Phase 1 release prep (`1.7a`) | ✅ Done: README install prerequisites, draft release notes, Phase 2 task files, tracker updates |
-| `v0.1.0` publish (`1.7b`) | 🟡 Tag + GitHub Release exist; CI is green on the tag commit. Repo remains private, so unauthenticated source install is still gated by visibility. |
+| `v0.1.0` publish (`1.7b`) | ✅ Tag + GitHub Release exist (private); CI green on the tag commit. **Public flip + unauthenticated source-install gate deferred to launch (`v0.4.0`)** by deliberate decision — not pending. |
 | Phase 2 discovery + chunking implementation | ✅ Done locally on `phase-2-discovery-chunking`: file discovery, HashStore, AST/sliding chunking, Phase 2 `vektor index` behavior |
 | `v0.2.0` publish | ⬜ Pending explicit release action: push final Phase 2 commit, wait for `ci.yml`, tag, GitHub Release |
+
+> **Release-visibility decision (2026-05-29):** the repo stays **PRIVATE until Vektor is launch-ready (`v0.4.0`)**. `v0.1.0` (and any interim `v0.2.0`/`v0.3.0`) are tagged + released **privately** — reachable only by authenticated collaborators. Going public is a one-way, launch-time action that requires explicit authorization; before flipping, curate what becomes world-visible (notably `VEKTOR_PRD.md`, which holds the competitive playbook). Until launch, the "unauthenticated source install" gate is **intentionally deferred, not blocked**. Do not flip to public — or suggest it — before the `v0.4.0` launch.
 
 ---
 
