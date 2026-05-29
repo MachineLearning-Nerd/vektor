@@ -110,14 +110,14 @@ graph TD
 
 | Task | Depends on | Blocks | Status |
 |---|---|---|---|
-| 2.1 discover_files() | 1.7b | 2.2 | 🟡 |
-| 2.2 HashStore + SQLite state.db | 2.1 | 2.7 | 🟡 |
-| 2.3 language detection | 1.7b | 2.4 | 🟡 |
+| 2.1 discover_files() | 1.7b | 2.2, 3.10 | 🟡 |
+| 2.2 HashStore + file/chunk hashing | 2.1 | 2.7, 2.8 | 🟡 |
+| 2.3 chunk types + language detection | 1.7b | 2.4, 2.6 | 🟡 |
 | 2.4 AST parse (tree-sitter) | 2.3 | 2.5 | 🟡 |
 | 2.5 AST chunker (5 langs) + header preservation | 2.4 | 2.7 | 🟡 |
-| 2.6 sliding-window fallback | 1.7b | 2.7 | 🟡 |
-| 2.7 chunk_file() dispatcher | 2.5, 2.6 | 2.8 | 🟡 |
-| 2.8 `--dump-chunks` CLI flag | 2.2, 2.7 | 2.9 | 🟡 |
+| 2.6 sliding-window fallback | 2.3 | 2.7 | 🟡 |
+| 2.7 chunk_file() dispatcher | 2.2, 2.5, 2.6 | 2.8 | 🟡 |
+| 2.8 index CLI Phase 2 behavior | 2.2, 2.7 | 2.9 | 🟡 |
 | 2.9 v0.2.0 release | 2.8 | 3.* | 🟡 |
 
 ### Phase 3 — Embedding + Storage (task list — per-task files TBD)
@@ -185,11 +185,11 @@ graph TD
 The longest dependency chain (the project bottleneck):
 
 ```
-0.1 → 1.1 → 1.2 → 1.3 → 1.4 → 1.5 → 1.6 → 1.7a → 1.7b → 2.1 → 2.2 → 2.7 → 2.8 → 2.9 →
+0.1 → 1.1 → 1.2 → 1.3 → 1.4 → 1.5 → 1.6 → 1.7a → 1.7b → 2.3 → 2.4 → 2.5 → 2.7 → 2.8 → 2.9 →
 3.1 → 3.2 → 3.3 → 3.5 → 3.7 → 3.12 → 4.1 → 4.5 → 5.5 → 5.6 → 5.13 → 6.5
 ```
 
-That's **26 sequential tasks** on the critical path. Everything else parallelizes around them.
+Task 2.7 also waits for `2.1 → 2.2` and `2.3 → 2.6` to join before the dispatcher can land. Everything else parallelizes around those joins.
 
 Tasks that can start early (off-critical-path, useful for parallel work):
 - **0.2 / 0.3 / 0.4** after 0.1 lands (independent)
