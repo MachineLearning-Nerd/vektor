@@ -5,11 +5,13 @@
 **Roadmap mapping**: Stage 2 / `v0.3.0`
 **PRD mapping**: Section 4.2 (Embedder), Section 4.10 (LanceDB schema), Section 6 (Embedding backends), Section 12 Week 3 Functions 3.1–3.9, plus brought-forward B1.2/B1.5 (SecretDetector) and B6.1 (`vektor models download`)
 **Effort estimate**: 4–6 weeks of focused part-time work — this is the hardest phase due to ONNX integration
-**Status**: ⬜ Not started — per-task files NOT yet written (task 2.9 expands them)
+**Status**: ⬜ Not started — readiness only. Per-task files are NOT yet written; expand them only after the Phase 2 publish gate is explicitly approved.
 
 ---
 
 ## Task list
+
+Do not start implementation from this table directly. These rows are the phase-level roadmap; task files must be written and reviewed before any Phase 3 code changes.
 
 | ID | Task | Effort | Depends on | Status |
 |---|---|---|---|---|
@@ -59,6 +61,7 @@ All must be true before tagging `v0.3.0`:
 
 ## Notes
 
+- **Phase 2 handoff**: discovery, HashStore, chunking, and Phase 2 `vektor index` behavior exist locally. Phase 3 consumes those APIs after the `v0.2.0` publish gate is approved and per-task files are expanded.
 - **ONNX integration is the hardest single task**. Reading the `ort 2.0.0-rc.12` docs and one working example before writing 3.2/3.3 saves multiple hours of debugging mean-pooling math.
 - **L2 normalization is required for cosine-via-dot-product**: if vectors aren't unit-norm, the LanceDB ANN scores are meaningless. Verify by computing `vec.iter().map(|x| x*x).sum::<f32>().sqrt()` after normalization; must equal 1.0 ± 1e-5.
 - **Don't pin arrow versions** (per PRD Section 11 fix): let `lancedb 0.29` own arrow's version transitively. If `cargo tree -d` shows duplicate arrow versions, fix at the consumer side — never patch lancedb.

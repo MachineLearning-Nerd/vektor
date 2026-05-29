@@ -110,17 +110,19 @@ graph TD
 
 | Task | Depends on | Blocks | Status |
 |---|---|---|---|
-| 2.1 discover_files() | 1.7b | 2.2, 3.10 | 🟡 |
-| 2.2 HashStore + file/chunk hashing | 2.1 | 2.7, 2.8 | 🟡 |
-| 2.3 chunk types + language detection | 1.7b | 2.4, 2.6 | 🟡 |
-| 2.4 AST parse (tree-sitter) | 2.3 | 2.5 | 🟡 |
-| 2.5 AST chunker (5 langs) + header preservation | 2.4 | 2.7 | 🟡 |
-| 2.6 sliding-window fallback | 2.3 | 2.7 | 🟡 |
-| 2.7 chunk_file() dispatcher | 2.2, 2.5, 2.6 | 2.8 | 🟡 |
-| 2.8 index CLI Phase 2 behavior | 2.2, 2.7 | 2.9 | 🟡 |
-| 2.9 v0.2.0 release | 2.8 | 3.* | 🟡 |
+| 2.1 discover_files() | 1.7b | 2.2, 3.10 | ✅ `e8fb34c` |
+| 2.2 HashStore + file/chunk hashing | 2.1 | 2.7, 2.8 | ✅ `7e6b004` |
+| 2.3 chunk types + language detection | 1.7b | 2.4, 2.6 | ✅ `24bb354` |
+| 2.4 AST parse (tree-sitter) | 2.3 | 2.5 | ✅ `e171af2` |
+| 2.5 AST chunker (5 langs) + header preservation | 2.4 | 2.7 | ✅ `d0a58f7` |
+| 2.6 sliding-window fallback | 2.3 | 2.7 | ✅ `8a5655b` |
+| 2.7 chunk_file() dispatcher | 2.2, 2.5, 2.6 | 2.8 | ✅ `ac3f9f8` |
+| 2.8 index CLI Phase 2 behavior | 2.2, 2.7 | 2.9 | ✅ `aca571b` |
+| 2.9 v0.2.0 release readiness docs | 2.8 | publish gate, 3.* | ✅ this change; tag/release requires explicit approval |
 
 ### Phase 3 — Embedding + Storage (task list — per-task files TBD)
+
+Phase 3 is not implementation-ready yet. Even though Phase 2 code is complete locally, Phase 3 work remains blocked until the `v0.2.0` publish gate is approved and Phase 3 per-task files are expanded.
 
 | Task | Depends on | Blocks | Status |
 |---|---|---|---|
@@ -194,7 +196,7 @@ Task 2.7 also waits for `2.1 → 2.2` and `2.3 → 2.6` to join before the dispa
 Tasks that can start early (off-critical-path, useful for parallel work):
 - **0.2 / 0.3 / 0.4** after 0.1 lands (independent)
 - **3.4 (OpenAI backend)** after 3.1, parallel with 3.2/3.3
-- **3.10 (SecretDetector)** after 2.1, parallel with 2.2–2.9
+- **3.10 (SecretDetector)** after 2.1 once Phase 3 is explicitly opened; it remains out of Phase 2 scope
 - **3.11 (`vektor models download`)** after 3.2, parallel with 3.6–3.9
 - **6.1 (`vektor init`)** after 4.7, parallel with most of Phase 5
 - **6.2 (release pipeline)** after 0.2 + 1.7b, parallel with all of Phases 2–5
