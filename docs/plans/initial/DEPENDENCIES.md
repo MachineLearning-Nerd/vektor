@@ -97,13 +97,13 @@ graph TD
 
 | Task | Depends on | Blocks | Status |
 |---|---|---|---|
-| 1.1 main entrypoint | 0.1, 0.3 | 1.2, 1.4 | ✅ pending commit |
-| 1.2 error module | 1.1 | 1.3 | ✅ pending commit |
-| 1.3 config module | 1.2 | 1.4 | ✅ pending commit |
-| 1.4 CLI args | 1.1, 1.3 | 1.5 | ✅ pending commit |
-| 1.5 tracing init | 1.4 | 1.6 | ✅ pending commit |
-| 1.6 MCP no-op handlers | 1.5 | 1.7a | ✅ pending commit |
-| 1.7a release prep docs + notes | 0.2, 0.4, 1.6 | 1.7b | ✅ pending commit |
+| 1.1 main entrypoint | 0.1, 0.3 | 1.2, 1.4 | ✅ `16a8c77` |
+| 1.2 error module | 1.1 | 1.3 | ✅ `16a8c77` |
+| 1.3 config module | 1.2 | 1.4 | ✅ `16a8c77` |
+| 1.4 CLI args | 1.1, 1.3 | 1.5 | ✅ `16a8c77` |
+| 1.5 tracing init | 1.4 | 1.6 | ✅ `16a8c77` |
+| 1.6 MCP no-op handlers | 1.5 | 1.7a | ✅ `16a8c77` |
+| 1.7a release prep docs + notes | 0.2, 0.4, 1.6 | 1.7b | ✅ `16a8c77` |
 | 1.7b publish v0.1.0 release | 1.7a, combined review | 2.* | 🟢 (requires explicit publish authorization) |
 
 ### Phase 2 — Discovery + Chunking

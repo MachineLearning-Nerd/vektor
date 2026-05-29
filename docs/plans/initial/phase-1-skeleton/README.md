@@ -31,13 +31,13 @@ After `1.7a` is clean, run one combined Phase 1 review before `1.7b`. `1.7b` is 
 
 | ID | Task | Effort | Depends on | Status | Commit |
 |---|---|---|---|---|---|
-| 1.1 | [main entrypoint](01-main-entrypoint.md) | S | 0.1, 0.3 | ✅ | pending commit |
-| 1.2 | [error module — thiserror](02-error-module.md) | S | 1.1 | ✅ | pending commit |
-| 1.3 | [config module — TOML + env override](03-config-module.md) | M | 1.2 | ✅ | pending commit |
-| 1.4 | [CLI args — clap derive subcommands](04-cli-args.md) | M | 1.1, 1.3 | ✅ | pending commit |
-| 1.5 | [tracing init](05-tracing-init.md) | S | 1.4 | ✅ | pending commit |
-| 1.6 | [MCP no-op handlers — rmcp 1.7](06-mcp-noop-handlers.md) | L | 1.5 | ✅ | pending commit |
-| 1.7a | [release prep docs + notes](07-v0.1.0-release.md) | S | 0.2, 0.4, 1.6 | ✅ | pending commit |
+| 1.1 | [main entrypoint](01-main-entrypoint.md) | S | 0.1, 0.3 | ✅ | `16a8c77` |
+| 1.2 | [error module — thiserror](02-error-module.md) | S | 1.1 | ✅ | `16a8c77` |
+| 1.3 | [config module — TOML + env override](03-config-module.md) | M | 1.2 | ✅ | `16a8c77` |
+| 1.4 | [CLI args — clap derive subcommands](04-cli-args.md) | M | 1.1, 1.3 | ✅ | `16a8c77` |
+| 1.5 | [tracing init](05-tracing-init.md) | S | 1.4 | ✅ | `16a8c77` |
+| 1.6 | [MCP no-op handlers — rmcp 1.7](06-mcp-noop-handlers.md) | L | 1.5 | ✅ | `16a8c77` |
+| 1.7a | [release prep docs + notes](07-v0.1.0-release.md) | S | 0.2, 0.4, 1.6 | ✅ | `16a8c77` |
 | 1.7b | [publish v0.1.0 tag + GitHub Release](08-v0.1.0-publish.md) | S | 1.7a + combined review | ⬜ | — |
 
 ---
@@ -82,7 +82,7 @@ Publish gates owned by `1.7b`:
 
 - **The MCP server is a no-op**: every tool handler returns a `{ "status": "not implemented yet", "phase": "<which-phase>" }` JSON object. This proves the rmcp wiring works without requiring real indexing/search logic.
 - **Tool list at v0.1.0**: `index_codebase`, `search_code`, `get_context_for_prompt` (the 3 primary tools per Roadmap Stage 2 staging).
-- **No automatic commit/tag in this working tree**: status rows use `pending commit` because this execution has not created commits. Replace those markers with real hashes when committing.
+- **Commit hashes**: Phase 1 tasks 1.1–1.7a all landed in the single Phase 1 commit `16a8c77`. Per-task commits weren't reconstructable from the final tree (later tasks rewrote earlier tasks' code — e.g. the dead-code placeholder added in 1.2/1.3 was removed in 1.6), so a milestone commit is the honest representation. Task 1.7b is a publish action tracked by the `v0.1.0` tag + GitHub Release, not a code commit.
 
 ---
 
