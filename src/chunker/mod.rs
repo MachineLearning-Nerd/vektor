@@ -1,9 +1,12 @@
 use std::path::Path;
 
 pub mod ast;
+pub mod sliding;
 
 #[allow(unused_imports)]
 pub use ast::parse_ast;
+#[allow(unused_imports)]
+pub use sliding::extract_chunks_sliding;
 
 #[allow(dead_code)]
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
