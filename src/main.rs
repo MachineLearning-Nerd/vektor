@@ -11,6 +11,7 @@ mod mcp;
 mod secrets;
 mod state;
 mod telemetry;
+mod vector_store;
 
 #[tokio::main]
 async fn main() -> Result<()> {

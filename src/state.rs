@@ -175,11 +175,18 @@ impl HashStore {
 }
 
 fn project_state_db_path(project_root: &Path, config: &Config) -> Result<PathBuf> {
+    Ok(project_data_dir(project_root, config)?.join("state.db"))
+}
+
+/// Resolve the project-scoped data directory `<data_dir>/<project-hash>/`.
+///
+/// The project hash is a SHA-256 of the canonicalized project root, so every
+/// per-project artifact (`state.db`, the LanceDB `lance/` dir, sidecar
+/// metadata) colocates under the same directory. Shared with `vector_store`.
+pub(crate) fn project_data_dir(project_root: &Path, config: &Config) -> Result<PathBuf> {
     let canonical_root = project_root.canonicalize()?;
     let project_key = hash_content(&canonical_root.to_string_lossy());
-    Ok(expand_data_dir(&config.index.data_dir)?
-        .join(project_key)
-        .join("state.db"))
+    Ok(expand_data_dir(&config.index.data_dir)?.join(project_key))
 }
 
 fn expand_data_dir(data_dir: &str) -> Result<PathBuf> {
