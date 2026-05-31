@@ -16,12 +16,10 @@ returns a **deliberately naive** `ContextPackage` (search → top-k → return, 
 NO dedup, expansion, or budget allocation — those are Phase 5). The point is that
 neither tool is a no-op after this task.
 
-> Note: the phase README lists 4.8's `Depends on` as `4.5, 4.7`; DEPENDENCIES.md
-> lists `4.5, 4.7, 5.5`. The `5.5` edge is the *full* assembly pipeline, which is
-> explicitly out of scope here — the Phase 4 `get_context_for_prompt` is naive by
-> design. Treat the executable dependency as `4.5, 4.7`; the 5.5 edge is the
-> Phase 5 upgrade of this same handler (task 5.6). This file follows the phase
-> README (4.5, 4.7) and flags the drift.
+> Note: this Phase 4 `get_context_for_prompt` is intentionally naive — the full
+> assembly pipeline (dedup, expansion, budget allocation) is Phase 5, and this
+> same handler is upgraded at task 5.6. The executable dependency is `4.5, 4.7`
+> (the phase README and DEPENDENCIES.md agree).
 
 ## Inputs (must exist before starting)
 

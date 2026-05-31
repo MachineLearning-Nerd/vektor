@@ -75,7 +75,7 @@ standard test suite.
 | All 15 Phase 3 task files marked ✅ Done | ✅ Verified | Phase 3 README / DEPENDENCIES.md updated with commit hashes |
 | `cargo fmt --check` | ✅ Verified | clean (exit 0) |
 | `cargo clippy --workspace --all-targets -- -D warnings` | ✅ Verified | clean (exit 0) |
-| `cargo test --workspace` | ✅ Verified | 224 passed, 0 failed, 7 ignored |
+| `cargo test --workspace` | ✅ Verified | 225 passed, 0 failed, 7 ignored |
 | LanceDB table has the full PRD §4.10 schema | ✅ Verified | `vector_store` schema + insert/search/delete unit tests |
 | Re-run on unchanged repo skips re-embedding (content_hash cache) | ✅ Verified | `vector_store` reuse/`plan_reindex` tests + `index_cli` (model-gated for the real-model path) |
 | One-function edit re-embeds only changed chunks | ✅ Verified | `vector_store` reindex-reuse tests with a fake embedder |

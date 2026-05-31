@@ -163,7 +163,7 @@ Phase 3 is ✅ Done. All embedding/storage tasks landed; `v0.3.0` is prepared as
 | 5.2 Deduplicator (50% overlap threshold) | 4.5 | 5.5 | 🟡 |
 | 5.3 RelatedExpander (chunk-level + tiered + hub-file skip) | 4.5 | 5.5 | 🟡 |
 | 5.4 QueryCache (LRU + file-level invalidation) | 4.5 | 5.5 | 🟡 |
-| 5.5 ContextAssembler orchestrator | 5.1, 5.2, 5.3, 5.4 | 4.8 | 🟡 |
+| 5.5 ContextAssembler orchestrator | 5.1, 5.2, 5.3, 5.4 | 5.6 | 🟡 |
 | 5.6 handle_get_context_for_prompt | 4.8, 5.5 | 5.13 | 🟡 |
 | 5.7 ShallowIndexer (two-tier) | 2.6, 4.1 | 5.8 | 🟡 |
 | 5.8 IndexStatusTracker | 5.7 | 5.13 | 🟡 |
