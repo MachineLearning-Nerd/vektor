@@ -57,7 +57,14 @@ fn dump_chunks_directory_discovers_files_deterministically() {
     assert!(a_pos < b_pos, "{stdout}");
 }
 
+// Real `vektor index` (no `--dump-chunks`) now builds the embedder + LanceDB
+// store via the shared Phase 3 index core, which requires a downloaded ONNX
+// model. These end-to-end tests are #[ignore]d so CI needs no model download;
+// run them manually after `vektor models download`. The equivalent
+// changed/unchanged/force, content-hash reuse, and non-UTF-8 behaviour is
+// covered without a model by the fake-embedder seam tests in `src/cli.rs`.
 #[test]
+#[ignore = "requires downloaded ONNX model (run after `vektor models download`)"]
 fn index_cli_tracks_changed_unchanged_and_force_with_isolated_state() {
     let fixture = tempfile::tempdir().expect("create fixture");
     let fake_home = tempfile::tempdir().expect("create fake home");
@@ -95,6 +102,7 @@ fn index_cli_tracks_changed_unchanged_and_force_with_isolated_state() {
 }
 
 #[test]
+#[ignore = "requires downloaded ONNX model (run after `vektor models download`)"]
 fn index_cli_uses_parent_relative_state_keys_for_file_inputs() {
     let fixture = tempfile::tempdir().expect("create fixture");
     let fake_home = tempfile::tempdir().expect("create fake home");
@@ -120,6 +128,7 @@ fn index_cli_uses_parent_relative_state_keys_for_file_inputs() {
 }
 
 #[test]
+#[ignore = "requires downloaded ONNX model (run after `vektor models download`)"]
 fn index_cli_chunks_readable_non_utf8_files_without_marking_failed() {
     let fixture = tempfile::tempdir().expect("create fixture");
     let fake_home = tempfile::tempdir().expect("create fake home");

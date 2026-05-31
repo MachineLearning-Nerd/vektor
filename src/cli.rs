@@ -1,16 +1,20 @@
 use std::{
     fs,
     path::{Path, PathBuf},
+    time::UNIX_EPOCH,
 };
 
 use clap::{Parser, Subcommand};
 
 use crate::{
     chunker::{Chunk, Language, chunk_file},
+    config::Config,
     discovery::discover_files,
+    embedder::{Embedder, build_embedder},
     error::{Result, VektorError},
     secrets::SecretDetector,
     state::{FileStatus, HashStore, hash_file},
+    vector_store::VectorStore,
 };
 
 #[derive(Parser, Debug)]
@@ -86,7 +90,7 @@ pub async fn run(cli: Cli) -> Result<()> {
                 dump_chunks = args.dump_chunks,
                 "vektor index requested"
             );
-            run_index(args, &config)
+            run_index(args, &config).await
         }
         Command::Serve(args) => {
             let transport = args.transport.unwrap_or_else(|| config.server.mode.clone());
@@ -113,14 +117,73 @@ pub async fn run(cli: Cli) -> Result<()> {
     }
 }
 
-fn run_index(args: IndexArgs, config: &crate::config::Config) -> Result<()> {
-    let (root, files) = collect_index_files(&args.path, config)?;
+async fn run_index(args: IndexArgs, config: &Config) -> Result<()> {
+    // `--dump-chunks` is a read-only debug aid: it must NEVER build the embedder
+    // or the vector store (no state, no LanceDB writes). Handle it before the
+    // shared index core so that contract holds.
     if args.dump_chunks {
+        let (_root, files) = collect_index_files(&args.path, config)?;
         dump_chunks(&files, config)?;
         return Ok(());
     }
 
-    let store = HashStore::open(&root, config)?;
+    let stats = index_path(&args.path, config, args.force).await?;
+
+    println!("files: {}", stats.files);
+    println!("changed: {}", stats.changed);
+    println!("unchanged: {}", stats.unchanged);
+    println!("failed: {}", stats.failed);
+    println!("chunks: {}", stats.chunks);
+    println!("embeddings: {}", stats.embeddings);
+    println!("reused: {}", stats.reused);
+    println!("skipped_secrets: {}", stats.skipped_secrets);
+
+    Ok(())
+}
+
+/// Shared async index core used by BOTH the `vektor index` CLI and the
+/// `index_codebase` MCP handler.
+///
+/// It builds the embedder ONCE ([`build_embedder`]) and the [`VectorStore`] ONCE
+/// (sized to the embedder's `dim`/`name`), then delegates to
+/// [`index_path_with_embedder`], which owns the per-file orchestration loop. The
+/// two entry points are thin wrappers: the CLI prints the returned [`IndexStats`]
+/// as a human summary, the MCP handler serializes them to JSON. There is no
+/// duplicated indexing loop.
+///
+/// `force` corresponds to the CLI `--force` / MCP `force_full` flag: when `true`,
+/// every discovered file is re-chunked/re-indexed regardless of its stored hash
+/// (cached vectors are still reused per-chunk inside [`VectorStore::reindex_file`]).
+pub(crate) async fn index_path(path: &Path, config: &Config, force: bool) -> Result<IndexStats> {
+    let (root, files) = collect_index_files(path, config)?;
+
+    let embedder = build_embedder(config)?;
+    let store = VectorStore::new(&root, config, embedder.dim(), embedder.name()).await?;
+
+    index_path_with_embedder(&root, files, config, embedder.as_ref(), store, force).await
+}
+
+/// Per-file index orchestration over an already-built embedder + store.
+///
+/// Split out from [`index_path`] as a TEST SEAM: tests inject a fake embedder and
+/// a tempdir-backed store so the full pipeline runs in CI without downloading the
+/// real ONNX model. Production callers go through [`index_path`].
+///
+/// Preserves the Phase 2 contract:
+/// - `should_skip_file` runs BEFORE any bytes are read (file-level secret gate);
+/// - `HashStore` status order is `Pending` before processing, then `Indexed` on
+///   success or `Failed` on read error;
+/// - chunks whose content trips `contains_secret` are dropped BEFORE embedding so
+///   secrets never reach the embedder or the vector store.
+async fn index_path_with_embedder(
+    root: &Path,
+    files: Vec<IndexFile>,
+    config: &Config,
+    embedder: &dyn Embedder,
+    mut store: VectorStore,
+    force: bool,
+) -> Result<IndexStats> {
+    let hash_store = HashStore::open(root, config)?;
     let detector = SecretDetector::new();
     let mut stats = IndexStats::default();
 
@@ -138,9 +201,9 @@ fn run_index(args: IndexArgs, config: &crate::config::Config) -> Result<()> {
         }
 
         let current_hash = hash_file(&file.path)?;
-        let stored_hash = store.get_hash(&file.rel_path)?;
-        let stored_status = store.get_status(&file.rel_path)?;
-        let should_process = args.force
+        let stored_hash = hash_store.get_hash(&file.rel_path)?;
+        let stored_status = hash_store.get_status(&file.rel_path)?;
+        let should_process = force
             || stored_hash.as_deref() != Some(current_hash.as_str())
             || stored_status != Some(FileStatus::Indexed);
 
@@ -150,53 +213,68 @@ fn run_index(args: IndexArgs, config: &crate::config::Config) -> Result<()> {
         }
 
         stats.changed += 1;
-        store.set_hash(&file.rel_path, &current_hash, FileStatus::Pending)?;
-        match read_file_lossy(&file.path) {
-            Ok(content) => {
-                // ── Content-level secret skip (after chunking, before embedding) ──
-                // chunk_file returns all chunks; we filter out any whose content
-                // looks like a secret. Task 3.7c will call detector.contains_secret
-                // per-chunk right before calling the embedder.
-                let all_chunks = chunk_file(Path::new(&file.rel_path), &content, config);
-                let mut safe_chunks = 0usize;
-                let mut secret_chunks = 0usize;
-                for chunk in &all_chunks {
-                    if detector.contains_secret(&chunk.content) {
-                        secret_chunks += 1;
-                        tracing::warn!(
-                            path = %file.rel_path,
-                            chunk_id = %chunk.id,
-                            "skipping chunk with potential secret (not embedded)"
-                        );
-                    } else {
-                        safe_chunks += 1;
-                    }
-                }
-                stats.chunks += safe_chunks;
-                stats.skipped_secrets += secret_chunks;
-                store.set_hash(&file.rel_path, &current_hash, FileStatus::Indexed)?;
-            }
+        hash_store.set_hash(&file.rel_path, &current_hash, FileStatus::Pending)?;
+
+        let content = match read_file_lossy(&file.path) {
+            Ok(content) => content,
             Err(error) => {
                 stats.failed += 1;
-                store.set_hash(&file.rel_path, &current_hash, FileStatus::Failed)?;
+                hash_store.set_hash(&file.rel_path, &current_hash, FileStatus::Failed)?;
                 tracing::debug!(
                     path = %file.path.display(),
                     error = %error,
-                    "failed to read file during Phase 2 index"
+                    "failed to read file during index"
                 );
+                continue;
+            }
+        };
+
+        // ── Content-level secret skip (after chunking, BEFORE embedding) ──────
+        // Drop any chunk whose content looks like a secret so it is never sent to
+        // the embedder or written to the vector store.
+        let all_chunks = chunk_file(Path::new(&file.rel_path), &content, config);
+        let mut safe_chunks: Vec<Chunk> = Vec::with_capacity(all_chunks.len());
+        for chunk in all_chunks {
+            if detector.contains_secret(&chunk.content) {
+                stats.skipped_secrets += 1;
+                tracing::warn!(
+                    path = %file.rel_path,
+                    chunk_id = %chunk.id,
+                    "skipping chunk with potential secret (not embedded)"
+                );
+            } else {
+                safe_chunks.push(chunk);
             }
         }
+
+        // Delete-then-insert this file's rows; reuse unchanged chunk embeddings.
+        let last_modified = file_mtime_secs(&file.path);
+        let reindex = store
+            .reindex_file(&file.rel_path, &safe_chunks, embedder, last_modified)
+            .await?;
+        stats.chunks += reindex.chunks;
+        stats.embeddings += reindex.embedded;
+        stats.reused += reindex.reused;
+
+        // M-3 decision: a file whose chunks were ALL secret-dropped is still marked
+        // Indexed (it was processed, has 0 vectors, won't reprocess until its hash
+        // changes). The dropped count is surfaced via `skipped_secrets`.
+        hash_store.set_hash(&file.rel_path, &current_hash, FileStatus::Indexed)?;
     }
 
-    println!("files: {}", stats.files);
-    println!("changed: {}", stats.changed);
-    println!("unchanged: {}", stats.unchanged);
-    println!("failed: {}", stats.failed);
-    println!("chunks: {}", stats.chunks);
-    println!("skipped_secrets: {}", stats.skipped_secrets);
-    println!("embeddings: 0 (Phase 3)");
+    Ok(stats)
+}
 
-    Ok(())
+/// File modification time as Unix seconds; falls back to `0` if unavailable
+/// (e.g. a platform without mtime). `last_modified` only feeds recency ranking,
+/// so a missing value degrades gracefully rather than failing the index.
+fn file_mtime_secs(path: &Path) -> i64 {
+    path.metadata()
+        .and_then(|m| m.modified())
+        .ok()
+        .and_then(|t| t.duration_since(UNIX_EPOCH).ok())
+        .and_then(|d| i64::try_from(d.as_secs()).ok())
+        .unwrap_or(0)
 }
 
 fn dump_chunks(files: &[IndexFile], config: &crate::config::Config) -> Result<()> {
@@ -323,17 +401,25 @@ struct IndexFile {
     rel_path: String,
 }
 
-#[derive(Default)]
-struct IndexStats {
-    files: usize,
-    changed: usize,
-    unchanged: usize,
-    failed: usize,
-    chunks: usize,
+/// Run-level index outcome aggregated across all files.
+///
+/// `pub(crate)` so the MCP `index_codebase` handler can read these fields and
+/// serialize them to JSON (the CLI prints them as a human summary).
+#[derive(Debug, Default)]
+pub(crate) struct IndexStats {
+    pub files: usize,
+    pub changed: usize,
+    pub unchanged: usize,
+    pub failed: usize,
+    pub chunks: usize,
+    /// Chunks freshly embedded across all files (cache misses).
+    pub embeddings: usize,
+    /// Chunks whose vector was reused from the existing-embeddings cache.
+    pub reused: usize,
     /// Number of files and chunks skipped because they matched secret patterns.
     /// File-level skips are detected before bytes are read; chunk-level skips
     /// occur after chunking but before embedding.
-    skipped_secrets: usize,
+    pub skipped_secrets: usize,
 }
 
 #[cfg(test)]
@@ -390,64 +476,6 @@ mod tests {
         assert!(files.is_empty());
     }
 
-    /// Integration test: `run_index` must skip `.env` files and report `skipped_secrets`.
-    ///
-    /// The `.env` file is created with a sentinel AWS key value. The test proves that:
-    /// 1. The file is detected as a secret file before its bytes are read.
-    /// 2. The AWS sentinel value never reaches chunk processing.
-    /// 3. The `skipped_secrets` counter is > 0 after indexing.
-    ///
-    /// The "fail if opened" guarantee comes from `should_skip_file` being path-only:
-    /// since `run_index` calls `detector.should_skip_file(&file.rel_path)` BEFORE
-    /// `hash_file` or `read_file_lossy`, the `.env` bytes are never accessed.
-    #[test]
-    fn index_cli_skips_secret_files_before_reading() {
-        let tempdir = tempfile::tempdir().expect("create tempdir");
-        let dir = tempdir.path();
-
-        // Write a safe Rust source file.
-        let safe_rs = dir.join("lib.rs");
-        std::fs::write(&safe_rs, "pub fn hello() -> &'static str { \"hello\" }")
-            .expect("write lib.rs");
-
-        // Write a .env file with a sentinel AWS key — MUST be skipped without reading.
-        // (The AWS sample key AKIAIOSFODNN7EXAMPLE is the canonical AWS docs example.)
-        let env_file = dir.join(".env");
-        std::fs::write(
-            &env_file,
-            "AWS_ACCESS_KEY_ID=AKIAIOSFODNN7EXAMPLE\nAWS_SECRET_ACCESS_KEY=wJalrXUtnFEMI/K7MDENG/bPxRfiCY\n",
-        )
-        .expect("write .env");
-
-        // Point data_dir inside the tempdir so state.db is isolated.
-        let mut config = crate::config::Config::default();
-        config.index.data_dir = dir.to_string_lossy().into_owned();
-
-        let args = IndexArgs {
-            path: dir.to_path_buf(),
-            force: false,
-            dump_chunks: false,
-        };
-
-        // Run indexing — must succeed without panicking.
-        run_index(args, &config).expect("run_index must succeed");
-
-        // Verify the .env sentinel value never appeared anywhere in the chunk store
-        // (the state.db only stores hashes/statuses, not content, so there's nothing
-        // to query — the important assertion is that run_index completed without
-        // processing the .env bytes, verified by the skipped_secrets counter behaviour
-        // above and the should_skip_file unit tests).
-        //
-        // Additionally verify that the file does NOT appear in the HashStore as Indexed
-        // (it was skipped at the file-level gate, so set_hash was never called for it).
-        let store = crate::state::HashStore::open(dir, &config).expect("open store");
-        let status = store.get_status(".env").expect("query .env status");
-        assert!(
-            status.is_none(),
-            ".env must not have a status in the hash store (was never processed)"
-        );
-    }
-
     /// Verify that a file containing the AWS sample key `AKIAIOSFODNN7EXAMPLE` in its
     /// *content* (not just its name) is also flagged by the content detector,
     /// ensuring it would be skipped before embedding even if the file-level check
@@ -460,6 +488,208 @@ mod tests {
         assert!(
             d.contains_secret(content),
             "AKIAIOSFODNN7EXAMPLE must be detected in chunk content"
+        );
+    }
+
+    // -----------------------------------------------------------------------
+    // 3.7c — shared index core tests (fake-embedder seam)
+    //
+    // These exercise `index_path_with_embedder` end-to-end (discover → secret
+    // skip → reindex_file → LanceDB) with a fake embedder so CI needs no model
+    // download. They share the exact pipeline the CLI and MCP handler use.
+    // -----------------------------------------------------------------------
+
+    use crate::embedder::Embedder;
+    use crate::vector_store::VectorStore;
+    use std::sync::atomic::{AtomicUsize, Ordering};
+
+    const TEST_DIM: usize = 8;
+    const TEST_MODEL: &str = "fake-embedder";
+
+    /// Fake embedder counting embedded texts; returns deterministic vectors so the
+    /// content-hash reuse path behaves like the real one (identical content ⇒
+    /// identical vector).
+    struct FakeEmbedder {
+        texts: AtomicUsize,
+    }
+
+    impl FakeEmbedder {
+        fn new() -> Self {
+            Self {
+                texts: AtomicUsize::new(0),
+            }
+        }
+        fn texts_embedded(&self) -> usize {
+            self.texts.load(Ordering::SeqCst)
+        }
+    }
+
+    #[async_trait::async_trait]
+    impl Embedder for FakeEmbedder {
+        async fn embed(&self, texts: &[String]) -> Result<Vec<Vec<f32>>> {
+            self.texts.fetch_add(texts.len(), Ordering::SeqCst);
+            Ok(texts
+                .iter()
+                .map(|t| vec![t.len() as f32; TEST_DIM])
+                .collect())
+        }
+        fn dim(&self) -> usize {
+            TEST_DIM
+        }
+        fn name(&self) -> &str {
+            TEST_MODEL
+        }
+        fn prefix_for_document(&self) -> &str {
+            ""
+        }
+        fn prefix_for_query(&self) -> &str {
+            ""
+        }
+    }
+
+    /// Config whose `data_dir` is a sibling of the indexed dir, so state.db and
+    /// the LanceDB `lance/` directory are NOT written inside the tree being
+    /// indexed (which would make them show up as files on the next run).
+    fn config_for(data_dir: &Path) -> Config {
+        let mut config = Config::default();
+        config.index.data_dir = data_dir.to_string_lossy().into_owned();
+        config
+    }
+
+    /// Run the shared core against `root` with a freshly built fake embedder + store.
+    async fn index_with_fake(root: &Path, config: &Config, force: bool) -> (IndexStats, usize) {
+        let (collected_root, files) = collect_index_files(root, config).expect("collect files");
+        let embedder = FakeEmbedder::new();
+        let store = VectorStore::new(&collected_root, config, TEST_DIM, TEST_MODEL)
+            .await
+            .expect("create store");
+        let stats =
+            index_path_with_embedder(&collected_root, files, config, &embedder, store, force)
+                .await
+                .expect("index");
+        (stats, embedder.texts_embedded())
+    }
+
+    #[tokio::test]
+    async fn index_cli_second_run_unchanged_embeds_nothing() {
+        let tempdir = tempfile::tempdir().expect("tempdir");
+        let dir = tempdir.path().join("repo");
+        std::fs::create_dir_all(&dir).expect("mkdir repo");
+        std::fs::write(dir.join("lib.rs"), "pub fn hello() -> u32 { 1 }\n").expect("write");
+        let config = config_for(&tempdir.path().join("data"));
+        let dir = dir.as_path();
+
+        let (first, first_embeds) = index_with_fake(dir, &config, false).await;
+        assert!(first.chunks > 0, "first run produces chunks");
+        assert!(first_embeds > 0, "first run embeds chunks");
+        assert_eq!(first.embeddings, first_embeds);
+        assert_eq!(first.reused, 0, "nothing to reuse on first run");
+
+        let (second, second_embeds) = index_with_fake(dir, &config, false).await;
+        assert_eq!(second.embeddings, 0, "unchanged second run embeds nothing");
+        assert_eq!(second_embeds, 0);
+        assert_eq!(second.unchanged, 1, "the one file is unchanged");
+        assert_eq!(second.changed, 0);
+    }
+
+    #[tokio::test]
+    async fn index_cli_changed_file_embeds_only_changed_content() {
+        let tempdir = tempfile::tempdir().expect("tempdir");
+        let dir = tempdir.path().join("repo");
+        std::fs::create_dir_all(&dir).expect("mkdir repo");
+        let file = dir.join("lib.rs");
+        std::fs::write(
+            &file,
+            "pub fn a() -> u32 { 1 }\n\npub fn b() -> u32 { 2 }\n",
+        )
+        .expect("write");
+        let config = config_for(&tempdir.path().join("data"));
+        let dir = dir.as_path();
+
+        let (first, _) = index_with_fake(dir, &config, false).await;
+        let first_chunks = first.chunks;
+        assert!(first_chunks >= 1);
+
+        // Modify only fn b. fn a's chunk content is unchanged ⇒ its vector reused.
+        std::fs::write(
+            &file,
+            "pub fn a() -> u32 { 1 }\n\npub fn b() -> u32 { 999 }\n",
+        )
+        .expect("rewrite");
+
+        let (second, second_embeds) = index_with_fake(dir, &config, false).await;
+        assert_eq!(second.changed, 1, "the file changed");
+        // At least one chunk is reused (fn a) and fewer than all are embedded,
+        // proving content-hash reuse works through the real chunker.
+        assert!(second.reused >= 1, "fn a's chunk is reused: {second:?}",);
+        assert!(
+            second.embeddings < second.chunks,
+            "not every chunk re-embedded (reuse happened)"
+        );
+        assert_eq!(second.embeddings, second_embeds);
+    }
+
+    /// `.env` must be skipped at the file level (never read) AND a secret in a
+    /// safe-named source file must be dropped at the chunk level before embedding.
+    #[tokio::test]
+    async fn index_cli_skips_secret_file_and_secret_chunk() {
+        let tempdir = tempfile::tempdir().expect("tempdir");
+        let dir = tempdir.path().join("repo");
+        std::fs::create_dir_all(&dir).expect("mkdir repo");
+
+        std::fs::write(dir.join("lib.rs"), "pub fn hello() -> u32 { 1 }\n").expect("write lib");
+        // .env: file-level skip (never read).
+        std::fs::write(dir.join(".env"), "AWS_ACCESS_KEY_ID=AKIAIOSFODNN7EXAMPLE\n")
+            .expect("write .env");
+        // A safe-named .txt file whose content carries a secret → chunk-level drop.
+        std::fs::write(
+            dir.join("notes.txt"),
+            "config notes\nAWS_ACCESS_KEY_ID=AKIAIOSFODNN7EXAMPLE\nmore notes\n",
+        )
+        .expect("write notes");
+
+        let config = config_for(&tempdir.path().join("data"));
+        let dir = dir.as_path();
+        let (stats, _) = index_with_fake(dir, &config, false).await;
+
+        assert!(
+            stats.skipped_secrets >= 2,
+            "both the .env file and the secret chunk are skipped+counted: {stats:?}"
+        );
+
+        // The .env file was never processed → no HashStore status.
+        let hs = HashStore::open(dir, &config).expect("open hash store");
+        assert!(
+            hs.get_status(".env").expect("status").is_none(),
+            ".env must never be processed"
+        );
+    }
+
+    /// `--dump-chunks` must create NO state.db and NO LanceDB store.
+    #[tokio::test]
+    async fn index_cli_dump_chunks_writes_no_state() {
+        let tempdir = tempfile::tempdir().expect("tempdir");
+        let dir = tempdir.path();
+        let data = tempdir.path().join("data");
+        std::fs::write(dir.join("lib.rs"), "pub fn hello() -> u32 { 1 }\n").expect("write");
+
+        let mut config = Config::default();
+        config.index.data_dir = data.to_string_lossy().into_owned();
+
+        let args = IndexArgs {
+            path: dir.to_path_buf(),
+            force: false,
+            dump_chunks: true,
+        };
+        run_index(args, &config).await.expect("dump_chunks ok");
+
+        // No per-project data dir should have been created (no state.db, no lance/).
+        assert!(
+            !data.exists()
+                || std::fs::read_dir(&data)
+                    .map(|mut d| d.next().is_none())
+                    .unwrap_or(true),
+            "--dump-chunks must not create any project state or vector storage"
         );
     }
 }

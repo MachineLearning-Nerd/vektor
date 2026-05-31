@@ -48,6 +48,9 @@ const CHUNKS_TABLE: &str = "chunks";
 const LANCE_SUBDIR: &str = "lance";
 /// Sidecar metadata file name (sits next to the `lance/` dir).
 const META_FILE: &str = "vector_meta.json";
+/// Maximum rows per LanceDB `Table::add` call during a `reindex_file` insert.
+/// Bounds the size of any single in-memory `RecordBatch` for large files.
+const INSERT_BATCH: usize = 500;
 
 /// Persisted store metadata. Survives reopen and lets us detect a
 /// dimension/model change that mandates a full re-index.
@@ -122,11 +125,7 @@ impl StoreMeta {
 /// - `language` is a NON-null `String` — callers map
 ///   `Chunk.language: Option<Language>` to a concrete string (e.g. `"unknown"`)
 ///   *before* constructing a `ChunkRow`, because the `language` column rejects
-///   nulls. 3.7c must carry that mapping.
-///
-/// `#[allow(dead_code)]`: only the test seed-path constructs these until 3.7a/3.7c
-/// wire up the real insert; allow until then.
-#[allow(dead_code)]
+///   nulls. 3.7c carries that mapping (see [`plan_reindex`]).
 #[derive(Debug, Clone)]
 pub struct ChunkRow {
     pub id: String,
@@ -152,19 +151,11 @@ pub struct ChunkRow {
 /// escaping (SQL string literals are not C-style; `\` is not an escape char).
 /// Doubling the quote is what prevents both predicate breakage and injection
 /// (a path like `a' OR '1'='1` becomes the inert literal `a'' OR ''1''=''1`).
-///
-/// `#[allow(dead_code)]`: consumed only via [`VectorStore::delete_by_file`] and
-/// its tests until 3.7c routes deletes through it; allow until then.
-#[allow(dead_code)]
 fn escape_sql_string_literal(value: &str) -> String {
     value.replace('\'', "''")
 }
 
 /// Embedded LanceDB vector store for a single project.
-///
-/// `#[allow(dead_code)]`: used by 3.7a/3.7c (insert/reindex); allow until then.
-/// Tests construct it, but the bin target sees the type and accessors as dead.
-#[allow(dead_code)]
 pub struct VectorStore {
     conn: Connection,
     lance_dir: PathBuf,
@@ -172,7 +163,6 @@ pub struct VectorStore {
     meta: StoreMeta,
 }
 
-#[allow(dead_code)]
 impl VectorStore {
     /// Open (or create) the project-scoped vector store.
     ///
@@ -260,16 +250,26 @@ impl VectorStore {
     }
 
     /// Persisted metadata for this store.
+    ///
+    /// `#[allow(dead_code)]`: read by tests and future search/status tasks
+    /// (3.8/3.12); the index path does not need it.
+    #[allow(dead_code)]
     pub fn meta(&self) -> &StoreMeta {
         &self.meta
     }
 
     /// Directory holding the LanceDB dataset (`<project-dir>/lance/`).
+    ///
+    /// `#[allow(dead_code)]`: read by tests; not needed by the index path.
+    #[allow(dead_code)]
     pub fn lance_dir(&self) -> &Path {
         &self.lance_dir
     }
 
     /// Name of the chunks table.
+    ///
+    /// `#[allow(dead_code)]`: convenience accessor for future search task (3.8).
+    #[allow(dead_code)]
     pub fn chunks_table_name(&self) -> &'static str {
         CHUNKS_TABLE
     }
@@ -292,9 +292,6 @@ impl VectorStore {
     /// tests, but the columnar mapping is the same contract).
     ///
     /// Inserting an empty slice is a no-op (`Ok(())`) — no batch, no churn.
-    ///
-    /// `#[allow(dead_code)]`: no non-test caller until 3.7a/3.7c; allow until then.
-    #[allow(dead_code)]
     pub(crate) async fn insert_chunks(&self, rows: &[ChunkRow]) -> Result<()> {
         if rows.is_empty() {
             return Ok(());
@@ -383,9 +380,6 @@ impl VectorStore {
     /// mutates rows or metadata, which is what makes it safe to call *before*
     /// `delete_by_file`. This is also the result-`RecordBatch` column-extraction
     /// pattern that 3.8 (search) reuses to read columns back out.
-    ///
-    /// `#[allow(dead_code)]`: used by 3.7b reindex planning; allow until then.
-    #[allow(dead_code)]
     pub(crate) async fn existing_embeddings_by_content_hash(
         &self,
         rel_path: &str,
@@ -493,9 +487,6 @@ impl VectorStore {
     /// the metadata is persisted (so ANN-rebuild churn logic can use it).
     ///
     /// Returns the number of rows deleted (from LanceDB's `DeleteResult`).
-    ///
-    /// `#[allow(dead_code)]`: no non-test caller until 3.7b/3.7c; allow until then.
-    #[allow(dead_code)]
     pub(crate) async fn delete_by_file(&mut self, rel_path: &str) -> Result<usize> {
         let predicate = format!("rel_path = '{}'", escape_sql_string_literal(rel_path));
 
@@ -516,17 +507,83 @@ impl VectorStore {
 
         Ok(deleted)
     }
+
+    /// Re-index a single file: refresh ALL of its rows to match `chunks`.
+    ///
+    /// This is the per-file integration crux of Phase 3 (PRD §4.5 delete-then-insert
+    /// re-indexing). It is the ONE place the CLI and MCP handler funnel through, so
+    /// the read/delete/embed/insert ordering lives here exactly once.
+    ///
+    /// ## Order (must not be reordered)
+    /// 1. **Read cache FIRST** ([`Self::existing_embeddings_by_content_hash`]) — the
+    ///    side-effect-free read of this file's current vectors keyed by
+    ///    `content_hash`. It MUST run before the delete, or there would be nothing
+    ///    left to reuse.
+    /// 2. **Delete** ([`Self::delete_by_file`]) the file's existing rows so a
+    ///    re-index never leaves orphaned/duplicate chunks (delete-then-insert).
+    /// 3. **Plan** ([`plan_reindex`]) — diff `chunks` against the cache, reusing
+    ///    cached vectors for unchanged content and embedding only the misses in a
+    ///    single `embed_documents` call.
+    /// 4. **Insert** the prepared rows via [`Self::insert_chunks`] in batches of at
+    ///    most [`INSERT_BATCH`] rows (LanceDB appends one `RecordBatch` per call;
+    ///    chunking keeps each batch bounded for large files).
+    ///
+    /// ## Empty `chunks`
+    /// The old rows are still deleted (an emptied/secret-only file must not keep
+    /// stale vectors), nothing is inserted, and the returned [`ReindexStats`] is all
+    /// zero. This is NOT an error.
+    pub(crate) async fn reindex_file(
+        &mut self,
+        rel_path: &str,
+        chunks: &[crate::chunker::Chunk],
+        embedder: &dyn crate::embedder::Embedder,
+        last_modified: i64,
+    ) -> Result<ReindexStats> {
+        // 1. Read existing vectors BEFORE deleting (read-before-delete invariant).
+        let cache = self.existing_embeddings_by_content_hash(rel_path).await?;
+
+        // 2. Delete the file's existing rows (delete-then-insert).
+        self.delete_by_file(rel_path).await?;
+
+        // 3. Plan the reuse/embed split. Empty chunks => no embedder call, no rows.
+        let (rows, plan) = plan_reindex(chunks, &cache, embedder, last_modified).await?;
+
+        // 4. Insert in bounded batches (<= INSERT_BATCH rows per RecordBatch).
+        for batch in rows.chunks(INSERT_BATCH) {
+            self.insert_chunks(batch).await?;
+        }
+
+        Ok(ReindexStats {
+            chunks: rows.len(),
+            embedded: plan.embedded,
+            reused: plan.reused,
+        })
+    }
 }
 
 // ---------------------------------------------------------------------------
 // 3.7b — Reindex reuse planner
 // ---------------------------------------------------------------------------
 
+/// Per-file outcome of [`VectorStore::reindex_file`].
+///
+/// `reused + embedded == chunks` (one row inserted per input chunk). All three
+/// are zero for an empty/secret-only file. The CLI and MCP handler aggregate
+/// these across files into the run-level [`crate::cli::IndexStats`].
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub struct ReindexStats {
+    /// Total chunk rows (re)inserted for this file.
+    pub chunks: usize,
+    /// Rows whose vector was freshly embedded (cache miss).
+    pub embedded: usize,
+    /// Rows whose vector was reused from the existing-embeddings cache.
+    pub reused: usize,
+}
+
 /// Counts of reused vs. freshly embedded chunks from [`plan_reindex`].
 ///
 /// `reused` + `embedded` always equals the number of input chunks.
 /// 3.7c reads these for logging / metrics.
-#[allow(dead_code)] // called by 3.7c reindex_file; allow until then
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ReindexPlan {
     /// Chunks whose vector was reused from the existing-embeddings cache.
@@ -559,10 +616,6 @@ pub struct ReindexPlan {
 /// - `language`: `Option<Language>` → non-null `String`; `Some(l)` →
 ///   `l.as_str()`, `None` → `"unknown"`.  The `language` column is non-null.
 /// - `last_modified` is supplied by the caller (3.7c passes the file's mtime).
-///
-/// `#[allow(dead_code)]`: no non-test caller until 3.7c wires `reindex_file`;
-/// allow until then.
-#[allow(dead_code)] // called by 3.7c reindex_file; allow until then
 pub(crate) async fn plan_reindex(
     chunks: &[crate::chunker::Chunk],
     cache: &HashMap<String, Vec<f32>>,
@@ -1599,5 +1652,238 @@ mod tests {
         for r in &records {
             assert_eq!(r.last_modified, 9999);
         }
+    }
+
+    // -----------------------------------------------------------------------
+    // 3.7c — reindex_file tests
+    // -----------------------------------------------------------------------
+
+    /// Read a chunk's stored vector by `content_hash` from the live table.
+    async fn vector_for(
+        store: &VectorStore,
+        rel_path: &str,
+        content_hash: &str,
+    ) -> Option<Vec<f32>> {
+        store
+            .existing_embeddings_by_content_hash(rel_path)
+            .await
+            .expect("read cache")
+            .get(content_hash)
+            .cloned()
+    }
+
+    #[tokio::test]
+    async fn reindex_file_first_pass_embeds_all_and_inserts_rows() {
+        let project = tempfile::tempdir().expect("project");
+        let data_dir = tempfile::tempdir().expect("data dir");
+        let config = config_with_data_dir(data_dir.path());
+        let embedder = CountingEmbedder::new(DIM);
+
+        let mut store = VectorStore::new(project.path(), &config, DIM, MODEL)
+            .await
+            .expect("create store");
+
+        let chunks = vec![
+            make_chunk(
+                "c1",
+                "fn a() {}",
+                "h-a",
+                "src/a.rs",
+                1,
+                3,
+                Some(Language::Rust),
+            ),
+            make_chunk(
+                "c2",
+                "fn b() {}",
+                "h-b",
+                "src/a.rs",
+                4,
+                6,
+                Some(Language::Rust),
+            ),
+        ];
+
+        let stats = store
+            .reindex_file("src/a.rs", &chunks, &embedder, 42)
+            .await
+            .expect("reindex");
+
+        assert_eq!(stats.chunks, 2);
+        assert_eq!(stats.embedded, 2, "new file embeds all chunks");
+        assert_eq!(stats.reused, 0);
+        assert_eq!(embedder.texts_embedded(), 2);
+        assert_eq!(count_for_path(&store, "src/a.rs").await, 2, "rows inserted");
+
+        // Vector values preserved (CountingEmbedder => vec![content.len(); DIM]).
+        let v = vector_for(&store, "src/a.rs", "h-a").await.expect("h-a");
+        assert_eq!(v, vec!["fn a() {}".len() as f32; DIM]);
+    }
+
+    #[tokio::test]
+    async fn reindex_file_unchanged_second_pass_reuses_all() {
+        let project = tempfile::tempdir().expect("project");
+        let data_dir = tempfile::tempdir().expect("data dir");
+        let config = config_with_data_dir(data_dir.path());
+        let embedder = CountingEmbedder::new(DIM);
+
+        let mut store = VectorStore::new(project.path(), &config, DIM, MODEL)
+            .await
+            .expect("create store");
+
+        let chunks = vec![
+            make_chunk("c1", "fn a() {}", "h-a", "src/a.rs", 1, 3, None),
+            make_chunk("c2", "fn b() {}", "h-b", "src/a.rs", 4, 6, None),
+        ];
+
+        store
+            .reindex_file("src/a.rs", &chunks, &embedder, 1)
+            .await
+            .expect("first reindex");
+        assert_eq!(embedder.texts_embedded(), 2);
+
+        // Second pass with identical chunks reuses every vector — zero embeds.
+        let stats = store
+            .reindex_file("src/a.rs", &chunks, &embedder, 2)
+            .await
+            .expect("second reindex");
+
+        assert_eq!(stats.embedded, 0, "unchanged file embeds nothing");
+        assert_eq!(stats.reused, 2);
+        assert_eq!(stats.chunks, 2);
+        assert_eq!(
+            embedder.texts_embedded(),
+            2,
+            "no further embedding on unchanged second pass"
+        );
+        assert_eq!(
+            count_for_path(&store, "src/a.rs").await,
+            2,
+            "no duplicate rows"
+        );
+    }
+
+    #[tokio::test]
+    async fn reindex_file_one_changed_chunk_embeds_only_that_chunk() {
+        let project = tempfile::tempdir().expect("project");
+        let data_dir = tempfile::tempdir().expect("data dir");
+        let config = config_with_data_dir(data_dir.path());
+        let embedder = CountingEmbedder::new(DIM);
+
+        let mut store = VectorStore::new(project.path(), &config, DIM, MODEL)
+            .await
+            .expect("create store");
+
+        let v1 = vec![
+            make_chunk("c1", "fn a() {}", "h-a", "src/a.rs", 1, 3, None),
+            make_chunk("c2", "fn b() {}", "h-b", "src/a.rs", 4, 6, None),
+        ];
+        store
+            .reindex_file("src/a.rs", &v1, &embedder, 1)
+            .await
+            .expect("first");
+        assert_eq!(embedder.texts_embedded(), 2);
+
+        // c2 changes content+hash; c1 unchanged.
+        let v2 = vec![
+            make_chunk("c1", "fn a() {}", "h-a", "src/a.rs", 1, 3, None),
+            make_chunk("c2", "fn b_changed() {}", "h-b2", "src/a.rs", 4, 6, None),
+        ];
+        let stats = store
+            .reindex_file("src/a.rs", &v2, &embedder, 2)
+            .await
+            .expect("second");
+
+        assert_eq!(stats.embedded, 1, "only the changed chunk is embedded");
+        assert_eq!(stats.reused, 1);
+        assert_eq!(
+            embedder.texts_embedded(),
+            3,
+            "two from first pass + one changed chunk"
+        );
+        assert_eq!(count_for_path(&store, "src/a.rs").await, 2);
+        // The old hash is gone, the new hash is present (delete-then-insert).
+        let map = store
+            .existing_embeddings_by_content_hash("src/a.rs")
+            .await
+            .expect("read");
+        assert!(map.contains_key("h-a"));
+        assert!(map.contains_key("h-b2"));
+        assert!(!map.contains_key("h-b"), "old chunk hash removed");
+    }
+
+    #[tokio::test]
+    async fn reindex_file_empty_chunks_deletes_and_inserts_nothing() {
+        let project = tempfile::tempdir().expect("project");
+        let data_dir = tempfile::tempdir().expect("data dir");
+        let config = config_with_data_dir(data_dir.path());
+        let embedder = CountingEmbedder::new(DIM);
+
+        let mut store = VectorStore::new(project.path(), &config, DIM, MODEL)
+            .await
+            .expect("create store");
+
+        let chunks = vec![make_chunk("c1", "fn a() {}", "h-a", "src/a.rs", 1, 3, None)];
+        store
+            .reindex_file("src/a.rs", &chunks, &embedder, 1)
+            .await
+            .expect("seed");
+        assert_eq!(count_for_path(&store, "src/a.rs").await, 1);
+
+        // Now reindex with NO chunks — old rows deleted, nothing inserted.
+        let stats = store
+            .reindex_file("src/a.rs", &[], &embedder, 2)
+            .await
+            .expect("empty");
+
+        assert_eq!(stats.chunks, 0);
+        assert_eq!(stats.embedded, 0);
+        assert_eq!(stats.reused, 0);
+        assert_eq!(
+            count_for_path(&store, "src/a.rs").await,
+            0,
+            "old rows deleted"
+        );
+    }
+
+    #[tokio::test]
+    async fn reindex_file_inserts_more_than_one_batch() {
+        // Exceed INSERT_BATCH (500) to prove batched inserts land every row.
+        let project = tempfile::tempdir().expect("project");
+        let data_dir = tempfile::tempdir().expect("data dir");
+        let config = config_with_data_dir(data_dir.path());
+        let embedder = CountingEmbedder::new(DIM);
+
+        let mut store = VectorStore::new(project.path(), &config, DIM, MODEL)
+            .await
+            .expect("create store");
+
+        let total = INSERT_BATCH + 23; // 523 chunks -> 2 batches.
+        let chunks: Vec<Chunk> = (0..total)
+            .map(|i| {
+                make_chunk(
+                    &format!("c{i}"),
+                    &format!("fn f{i}() {{}}"),
+                    &format!("h-{i}"),
+                    "src/big.rs",
+                    i,
+                    i + 1,
+                    None,
+                )
+            })
+            .collect();
+
+        let stats = store
+            .reindex_file("src/big.rs", &chunks, &embedder, 1)
+            .await
+            .expect("reindex big file");
+
+        assert_eq!(stats.chunks, total);
+        assert_eq!(stats.embedded, total);
+        assert_eq!(
+            count_for_path(&store, "src/big.rs").await,
+            total,
+            "all rows across both batches are inserted"
+        );
     }
 }
