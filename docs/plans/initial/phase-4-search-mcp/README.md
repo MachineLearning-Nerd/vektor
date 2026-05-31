@@ -5,7 +5,7 @@
 **Roadmap mapping**: Stage 2 — bridges `v0.3.0` (storage) to `v0.4.0` (full context assembly). **No release tag from this phase alone**; releases happen at the v0.4.0 boundary after Phase 5 lands.
 **PRD mapping**: Section 4.2 (Hybrid Search + RRF), Section 4.6 (Two-Tier), Section 12 Week 4 Functions 4.1–4.8, Functions CA.10 + CA.11 (synonym, adaptive weights)
 **Effort estimate**: 2–3 weeks of focused part-time work
-**Status**: ⬜ Not started — per-task files NOT yet written (task 3.12 expands them)
+**Status**: ⬜ Not started — per-task files written (expanded by task 3.12). Implementation starts from the linked task files, not from this summary table.
 
 ---
 
@@ -13,14 +13,14 @@
 
 | ID | Task | Effort | Depends on | Status |
 |---|---|---|---|---|
-| 4.1 | `TextIndex::new(project_dir)` — Tantivy schema per PRD §4.10 (chunk_id / rel_path / content / symbol_name 2.0× boost / language / start_line / end_line / index_depth) | M | 3.12 | ⬜ |
-| 4.2 | `TextIndex::add_chunks(chunks)` — batch insert + commit | S | 4.1 | ⬜ |
-| 4.3 | `TextIndex::search(query, top_k)` — BM25 with en_stem tokenizer | M | 4.2 | ⬜ |
-| 4.4 | `rrf_fuse(semantic, keyword, k)` + `AdaptiveWeights::compute` + `SynonymExpander` (~50 entries) | M | 3.12 | ⬜ |
-| 4.5 | `search_hybrid(query, config)` — tokio::join! of vector + text search → RRF fusion | M | 3.8, 4.3, 4.4 | ⬜ |
-| 4.6 | `index_codebase(path, config, force)` orchestrator — discover → hash → chunk → embed → store + Tantivy | L | 3.7c, 4.2 | ⬜ |
-| 4.7 | MCP server: replace no-op handlers from task 1.6 with real `search_code` + `index_codebase` dispatch | M | 1.6, 4.6 | ⬜ |
-| 4.8 | Basic `get_context_for_prompt` handler — search → top-k results → return without dedup/budget (full assembly is Phase 5) | M | 4.5, 4.7 | ⬜ |
+| 4.1 | [`TextIndex::new(project_dir)` — Tantivy schema per PRD §4.10 (chunk_id / rel_path / content / symbol_name 2.0× boost / language / start_line / end_line / index_depth)](01-text-index-new.md) | M | 3.12 | ⬜ |
+| 4.2 | [`TextIndex::add_chunks(chunks)` — batch insert + commit](02-text-index-add-chunks.md) | S | 4.1 | ⬜ |
+| 4.3 | [`TextIndex::search(query, top_k)` — BM25 with en_stem tokenizer](03-text-index-search.md) | M | 4.2 | ⬜ |
+| 4.4 | [`rrf_fuse(semantic, keyword, k)` + `AdaptiveWeights::compute` + `SynonymExpander` (~50 entries)](04-rrf-fuse-adaptive-weights-synonyms.md) | M | 3.12 | ⬜ |
+| 4.5 | [`search_hybrid(query, config)` — tokio::join! of vector + text search → RRF fusion](05-search-hybrid.md) | M | 3.8, 4.3, 4.4 | ⬜ |
+| 4.6 | [`index_codebase` orchestrator — EXTEND the Phase 3 vector-only handler to also write Tantivy BM25 (does not rebuild it)](06-index-codebase-orchestrator.md) | L | 3.7c, 4.2 | ⬜ |
+| 4.7 | [MCP server: replace no-op handlers from task 1.6 with real `search_code` + `index_codebase` dispatch](07-mcp-server-bootstrap.md) | M | 1.6, 4.6 | ⬜ |
+| 4.8 | [Tool handlers: real `search_code` + basic `get_context_for_prompt` (search → top-k → return without dedup/budget; full assembly is Phase 5)](08-tool-handlers.md) | M | 4.5, 4.7 | ⬜ |
 
 ---
 

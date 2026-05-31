@@ -13,12 +13,12 @@ This plan covers **Roadmap Stage 2** only (see [`VEKTOR_ROADMAP.md`](../../../VE
 | Phase 0 — Scaffolding | (none — pre-`v0.1.0`) | ✅ **Done** (4 of 4) | Cargo init ✅ (`a3a2c2a`); hooks ✅ (`689d5b2`); deny ✅ (`08361cc`); CI ✅ (`73ed9d9` + `080305d`); GitHub repo at https://github.com/MachineLearning-Nerd/vektor (private). |
 | Phase 1 — Skeleton | `v0.1.0` | ✅ **Done** — published (private) | Binary entry point, config, error types, CLI, tracing, and no-op MCP handlers implemented. `v0.1.0` tag + GitHub Release exist (private). Repo stays **private until launch (`v0.4.0`)** by decision; the public flip + unauthenticated-install gate are deferred to the launch milestone, not pending. |
 | Phase 2 — Discovery + Chunking | `v0.2.0` | ✅ **Done** — published (private) | File discovery, HashStore, AST/sliding chunking, and Phase 2 `vektor index` behavior, merged to main via PR #1. `v0.2.0` tag + notes-only GitHub Release exist (private). |
-| Phase 3 — Embedding + Storage | `v0.3.0` | ⬜ Not started | Per-task files are written. Implementation starts from the lowest unblocked Phase 3 task; no embedding/storage code has landed yet. |
-| Phase 4 — Search + MCP | (interim) | ⬜ Not started | Tantivy BM25, RRF fusion, MCP tool dispatch for 3 primary tools. |
+| Phase 3 — Embedding + Storage | `v0.3.0` | ✅ **Done** — prepared (private, notes-only) | ONNX Jina v2 + OpenAI-compatible embedders + factory, LanceDB vector store (schema/cache/reindex/search/delete), content-addressed re-index cache, secret-aware indexing, `vektor models download`, real vector-only `index_codebase` MCP tool. `v0.3.0` version bumped + release notes drafted; tag/publish pending separate human authorization. |
+| Phase 4 — Search + MCP | (interim) | ⬜ Not started | Per-task files written (`01-..08-*.md`). Tantivy BM25, RRF fusion + adaptive weights + synonyms, hybrid search, real MCP tool dispatch for 3 primary tools (4.6 extends the Phase 3 vector-only `index_codebase` to also write Tantivy). |
 | Phase 5 — Context Assembly | `v0.4.0` | ⬜ Not started | TokenCounter, Deduplicator, RelatedExpander, QueryCache, ShallowIndexer, RecencyTracker. |
 | Phase 6 — Launch Polish | `v0.4.0` | ⬜ Not started | `vektor init`, signed release pipeline, lightweight benchmark gate, `BENCHMARKS.md` baseline. |
 
-**Active phase**: Phase 3 implementation. `v0.1.0` and `v0.2.0` are tagged + released (private); the public flip is deferred to launch (`v0.4.0`). Start with the lowest-numbered unblocked Phase 3 task from `DEPENDENCIES.md`.
+**Active phase**: Phase 4 — Search + MCP. Phase 3 is complete and `v0.3.0` is prepared (private notes-only; tag/publish pending separate authorization). `v0.1.0` and `v0.2.0` are tagged + released (private); the public flip is deferred to launch (`v0.4.0`). Start with the lowest-numbered unblocked Phase 4 task from `DEPENDENCIES.md` (4.1 and 4.4 are 🟢).
 
 ---
 
@@ -120,7 +120,15 @@ docs/plans/initial/
 │   ├── 11-models-download.md
 │   └── 12-v0.3.0-release.md
 ├── phase-4-search-mcp/
-│   └── README.md
+│   ├── README.md
+│   ├── 01-text-index-new.md
+│   ├── 02-text-index-add-chunks.md
+│   ├── 03-text-index-search.md
+│   ├── 04-rrf-fuse-adaptive-weights-synonyms.md
+│   ├── 05-search-hybrid.md
+│   ├── 06-index-codebase-orchestrator.md
+│   ├── 07-mcp-server-bootstrap.md
+│   └── 08-tool-handlers.md
 ├── phase-5-context-assembly/
 │   └── README.md
 └── phase-6-launch-polish/
@@ -131,15 +139,15 @@ docs/plans/initial/
 
 ## Pre-planned vs just-in-time
 
-Phases 0, 1, 2, and 3 are **planned at the task level**. Phase 2 is complete and published privately; Phase 3 task files are now the active execution surface.
+Phases 0, 1, 2, 3, and 4 are **planned at the task level**. Phases 2 and 3 are complete (Phase 3 prepared as a private notes-only `v0.3.0`); Phase 4 task files are now the active execution surface.
 
-Phases 4–6 remain **planned at the phase level** with task lists only. Later per-task files are written **just before each phase begins** so that:
+Phases 5–6 remain **planned at the phase level** with task lists only. Later per-task files are written **just before each phase begins** so that:
 
-1. Lessons from earlier phases inform later tasks (we won't pre-write task 5.7 today based on assumptions we'll find wrong in Phase 3)
+1. Lessons from earlier phases inform later tasks (we won't pre-write task 5.7 today based on assumptions we'll find wrong in Phase 4)
 2. The plan stays a *tool*, not a stale document
 3. Reviewers can validate the format on Phases 0/1 before we commit to per-task details for all 50+ tasks
 
-The Phase 2 task files were expanded during `1.7a` release prep. The Phase 3 task files are now expanded after the private `v0.2.0` publish gate. Phase 4 remains phase-level until task 3.12 expands it.
+The Phase 2 task files were expanded during `1.7a` release prep. The Phase 3 task files were expanded after the private `v0.2.0` publish gate. The Phase 4 task files were expanded by task 3.12 (Phase 3 closure). Phase 5 remains phase-level until task 4.8 expands it.
 
 ---
 

@@ -122,38 +122,38 @@ graph TD
 
 ### Phase 3 — Embedding + Storage
 
-Phase 3 per-task files are written. `v0.2.0` is tagged + released privately, so tasks whose dependencies are done are unblocked; implementation must start from the linked task files, not from the phase table.
+Phase 3 is ✅ Done. All embedding/storage tasks landed; `v0.3.0` is prepared as a private notes-only release (tag/publish pending separate human authorization — see `release-notes-v0.3.0.md`). Phase 4 tasks whose dependencies are now met are flipped to 🟢.
 
 | Task | Depends on | Blocks | Status |
 |---|---|---|---|
-| 3.0 extend VektorError taxonomy (embedding/storage/network variants) | 1.2 | 3.1, 3.6 | 🟢 |
-| 3.1 Embedder trait | 2.9, 3.0 | 3.2, 3.4 | 🟡 |
-| 3.2 OnnxEmbedder::new + warm-up | 3.1 | 3.3, 3.5, 3.11 | 🟡 |
-| 3.3 OnnxEmbedder::embed (tokenize+pool+norm) | 3.2 | 3.5 | 🟡 |
-| 3.4 OpenAiCompatEmbedder | 3.1 | 3.5 | 🟡 |
-| 3.5 build_embedder() factory | 3.2, 3.3, 3.4 | 3.7b | 🟡 |
-| 3.6 VectorStore::new (LanceDB Arrow schema) | 2.9, 3.0 | 3.7a, 3.9 | 🟡 |
-| 3.7a VectorStore read-before-delete cache | 3.6 | 3.7b | 🟡 |
-| 3.7b VectorStore reindex reuse planning | 3.5, 3.7a, 3.9 | 3.7c | 🟡 |
-| 3.7c VectorStore insert + `vektor index` CLI + `index_codebase` MCP handler (vector-only) | 3.7b, 3.10 | 3.8, 3.12 | 🟡 |
-| 3.8 VectorStore::search (ANN query) | 3.7c | 3.12, 4.5 | 🟡 |
-| 3.9 VectorStore::delete_by_file | 3.6 | 3.7b | 🟡 |
-| 3.10 SecretDetector + file-level skip list (B1.2/B1.5) | 2.1 | 3.7c | 🟢 |
-| 3.11 `vektor models download` (B6.1) | 3.2 | 3.12 | 🟡 |
-| 3.12 v0.3.0 release | 3.7c, 3.8, 3.10, 3.11 | 4.* | 🟡 |
+| 3.0 extend VektorError taxonomy (embedding/storage/network variants) | 1.2 | 3.1, 3.6 | ✅ `bfc4037` |
+| 3.1 Embedder trait | 2.9, 3.0 | 3.2, 3.4 | ✅ `2b557a5` |
+| 3.2 OnnxEmbedder::new + warm-up | 3.1 | 3.3, 3.5, 3.11 | ✅ `214fa09` |
+| 3.3 OnnxEmbedder::embed (tokenize+pool+norm) | 3.2 | 3.5 | ✅ `56aa16a` |
+| 3.4 OpenAiCompatEmbedder | 3.1 | 3.5 | ✅ `5d6505d` (+ key redaction `da5d966`) |
+| 3.5 build_embedder() factory | 3.2, 3.3, 3.4 | 3.7b | ✅ `610ecf5` |
+| 3.6 VectorStore::new (LanceDB Arrow schema) | 2.9, 3.0 | 3.7a, 3.9 | ✅ `b51207c` |
+| 3.7a VectorStore read-before-delete cache | 3.6 | 3.7b | ✅ `bc77f96` |
+| 3.7b VectorStore reindex reuse planning | 3.5, 3.7a, 3.9 | 3.7c | ✅ `b55faa7` |
+| 3.7c VectorStore insert + `vektor index` CLI + `index_codebase` MCP handler (vector-only) | 3.7b, 3.10 | 3.8, 3.12 | ✅ `928321e` + `afb1fb9` |
+| 3.8 VectorStore::search (ANN query) | 3.7c | 3.12, 4.5 | ✅ `72b281d` |
+| 3.9 VectorStore::delete_by_file | 3.6 | 3.7b | ✅ `b7797e2` |
+| 3.10 SecretDetector + file-level skip list (B1.2/B1.5) | 2.1 | 3.7c | ✅ `074829c` |
+| 3.11 `vektor models download` (B6.1) | 3.2 | 3.12 | ✅ `6019ff8` |
+| 3.12 v0.3.0 release | 3.7c, 3.8, 3.10, 3.11 | 4.* | ✅ `(this commit)` |
 
-### Phase 4 — Search + MCP (task list — per-task files TBD)
+### Phase 4 — Search + MCP (per-task files written by task 3.12)
 
 | Task | Depends on | Blocks | Status |
 |---|---|---|---|
-| 4.1 TextIndex::new (Tantivy schema) | 3.12 | 4.2 | 🟡 |
-| 4.2 TextIndex::add_chunks | 4.1 | 4.3 | 🟡 |
+| 4.1 TextIndex::new (Tantivy schema) | 3.12 | 4.2 | 🟢 |
+| 4.2 TextIndex::add_chunks | 4.1 | 4.3, 4.6 | 🟡 |
 | 4.3 TextIndex::search (BM25) | 4.2 | 4.5 | 🟡 |
-| 4.4 rrf_fuse + AdaptiveWeights + SynonymExpander | 3.12 | 4.5 | 🟡 |
+| 4.4 rrf_fuse + AdaptiveWeights + SynonymExpander | 3.12 | 4.5 | 🟢 |
 | 4.5 search_hybrid orchestrator | 3.8, 4.3, 4.4 | 4.6, 4.8 | 🟡 |
 | 4.6 index_codebase — extend the Phase 3 (vector-only) handler to also write Tantivy BM25 | 3.7c, 4.2 | 4.7 | 🟡 |
 | 4.7 MCP server bootstrap (rmcp 1.7 real handlers) | 1.6, 4.6 | 4.8 | 🟡 |
-| 4.8 Tool handlers: index/search/get_context_for_prompt | 4.5, 4.7, 5.5 | 5.6 | 🟡 |
+| 4.8 Tool handlers: real search_code + basic get_context_for_prompt (full assembly is Phase 5 / task 5.6) | 4.5, 4.7 | 5.6 | 🟡 |
 
 ### Phase 5 — Context Assembly (task list — per-task files TBD)
 
