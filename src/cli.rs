@@ -110,9 +110,12 @@ pub async fn run(cli: Cli) -> Result<()> {
             action: ModelsAction::Download { lite },
         } => {
             tracing::info!(lite, "vektor models download requested");
-            Err(VektorError::NotImplemented(
-                "vektor models download (Phase 3)",
-            ))
+            let spec = if lite {
+                &crate::models::BGE_SMALL_EN_V1_5
+            } else {
+                &crate::models::JINA_V2_BASE_CODE
+            };
+            crate::models::download_model(spec, &config, "https://huggingface.co").await
         }
     }
 }

@@ -8,6 +8,7 @@ mod discovery;
 mod embedder;
 mod error;
 mod mcp;
+mod models;
 mod secrets;
 mod state;
 mod telemetry;
