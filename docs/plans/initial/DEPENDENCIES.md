@@ -126,15 +126,16 @@ Phase 3 per-task files are written. `v0.2.0` is tagged + released privately, so 
 
 | Task | Depends on | Blocks | Status |
 |---|---|---|---|
-| 3.1 Embedder trait | 2.9 | 3.2, 3.4 | 🟢 |
+| 3.0 extend VektorError taxonomy (embedding/storage/network variants) | 1.2 | 3.1, 3.6 | 🟢 |
+| 3.1 Embedder trait | 2.9, 3.0 | 3.2, 3.4 | 🟡 |
 | 3.2 OnnxEmbedder::new + warm-up | 3.1 | 3.3, 3.5, 3.11 | 🟡 |
 | 3.3 OnnxEmbedder::embed (tokenize+pool+norm) | 3.2 | 3.5 | 🟡 |
 | 3.4 OpenAiCompatEmbedder | 3.1 | 3.5 | 🟡 |
 | 3.5 build_embedder() factory | 3.2, 3.3, 3.4 | 3.7b | 🟡 |
-| 3.6 VectorStore::new (LanceDB Arrow schema) | 2.9 | 3.7a, 3.9 | 🟢 |
+| 3.6 VectorStore::new (LanceDB Arrow schema) | 2.9, 3.0 | 3.7a, 3.9 | 🟡 |
 | 3.7a VectorStore read-before-delete cache | 3.6 | 3.7b | 🟡 |
 | 3.7b VectorStore reindex reuse planning | 3.5, 3.7a, 3.9 | 3.7c | 🟡 |
-| 3.7c VectorStore insert + `vektor index` integration | 3.7b, 3.10 | 3.8, 3.12 | 🟡 |
+| 3.7c VectorStore insert + `vektor index` CLI + `index_codebase` MCP handler (vector-only) | 3.7b, 3.10 | 3.8, 3.12 | 🟡 |
 | 3.8 VectorStore::search (ANN query) | 3.7c | 3.12, 4.5 | 🟡 |
 | 3.9 VectorStore::delete_by_file | 3.6 | 3.7b | 🟡 |
 | 3.10 SecretDetector + file-level skip list (B1.2/B1.5) | 2.1 | 3.7c | 🟢 |
@@ -150,7 +151,7 @@ Phase 3 per-task files are written. `v0.2.0` is tagged + released privately, so 
 | 4.3 TextIndex::search (BM25) | 4.2 | 4.5 | 🟡 |
 | 4.4 rrf_fuse + AdaptiveWeights + SynonymExpander | 3.12 | 4.5 | 🟡 |
 | 4.5 search_hybrid orchestrator | 3.8, 4.3, 4.4 | 4.6, 4.8 | 🟡 |
-| 4.6 index_codebase orchestrator | 3.7c, 4.2 | 4.7 | 🟡 |
+| 4.6 index_codebase — extend the Phase 3 (vector-only) handler to also write Tantivy BM25 | 3.7c, 4.2 | 4.7 | 🟡 |
 | 4.7 MCP server bootstrap (rmcp 1.7 real handlers) | 1.6, 4.6 | 4.8 | 🟡 |
 | 4.8 Tool handlers: index/search/get_context_for_prompt | 4.5, 4.7, 5.5 | 5.6 | 🟡 |
 
@@ -191,14 +192,14 @@ The longest dependency chain (the project bottleneck):
 
 ```
 0.1 → 1.1 → 1.2 → 1.3 → 1.4 → 1.5 → 1.6 → 1.7a → 1.7b → 2.3 → 2.4 → 2.5 → 2.7 → 2.8 → 2.9 →
-3.1 → 3.2 → 3.3 → 3.5 → 3.7b → 3.7c → 3.8 → 3.12 → 4.1 → 4.5 → 5.5 → 5.6 → 5.13 → 6.5
+3.0 → 3.1 → 3.2 → 3.3 → 3.5 → 3.7b → 3.7c → 3.8 → 3.12 → 4.1 → 4.5 → 5.5 → 5.6 → 5.13 → 6.5
 ```
 
 Task 2.7 also waits for `2.1 → 2.2` and `2.3 → 2.6` to join before the dispatcher can land. Everything else parallelizes around those joins.
 
 Tasks that can start early (off-critical-path, useful for parallel work):
 - **0.2 / 0.3 / 0.4** after 0.1 lands (independent)
-- **3.1 (Embedder trait)**, **3.6 (VectorStore schema)**, and **3.10 (SecretDetector)** can start now after Phase 2 completion.
+- **3.0 (error taxonomy)** and **3.10 (SecretDetector)** can start now after Phase 2 completion; **3.1 (Embedder trait)** and **3.6 (VectorStore schema)** unblock once 3.0 lands.
 - **3.4 (OpenAI backend)** after 3.1, parallel with 3.2/3.3.
 - **3.11 (`vektor models download`)** after 3.2, parallel with 3.6–3.9.
 - **6.1 (`vektor init`)** after 4.7, parallel with most of Phase 5

@@ -17,6 +17,7 @@ Prevent obvious secrets from being embedded or sent to cloud APIs by adding a se
 - Phase 2 file discovery and `vektor index` flow
 - Phase 2 note that `.env` was intentionally visible until Phase 3
 - Roadmap B1.2/B1.5 secret-aware indexing scope
+- `regex` crate: currently **commented out** in `Cargo.toml` (`# regex = "1"`, under the "Phase 2" block). This task must uncomment/enable it, since the rule set relies on regex matching. (This task is independent of task 3.0 — it only needs `Io`/`Config`/`Parse` error variants, not the new embedding/storage/network ones.)
 
 ## Outputs (must exist after completion)
 

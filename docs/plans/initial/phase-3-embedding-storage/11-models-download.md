@@ -16,7 +16,7 @@ Replace the `vektor models download` stub with an idempotent, resumable model do
 
 - CLI `models download [--lite]` surface from Phase 1
 - Model path resolution from task 3.2
-- `reqwest` and `indicatif` dependencies already present in `Cargo.toml`
+- `reqwest` and `indicatif` dependencies already present in `Cargo.toml`. NOTE: `reqwest` currently enables only `features = ["json"]`. Range-request resume needs a `Range` header plus handling of HTTP `206 Partial Content`; the body can be consumed via `Response::chunk()` (no extra feature) or `bytes_stream()` (requires enabling the `stream` feature). Confirm/extend the feature set before implementing rather than assuming `stream` is available.
 - HuggingFace artifact layout for the supported model repositories
 
 ## Outputs (must exist after completion)

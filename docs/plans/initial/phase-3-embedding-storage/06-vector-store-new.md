@@ -5,7 +5,7 @@
 **PRD reference**: Section 4.10 storage schema, Section 12 Function 3.6 (`VectorStore::new`)
 **Roadmap stage**: Stage 2 / `v0.3.0`
 **Effort estimate**: M
-**Depends on**: 2.9
+**Depends on**: 2.9, 3.0
 **Blocks**: 3.7a, 3.9
 
 ## Objective

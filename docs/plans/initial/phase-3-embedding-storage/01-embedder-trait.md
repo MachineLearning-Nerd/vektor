@@ -5,7 +5,7 @@
 **PRD reference**: Section 12 Function 3.1 (`Embedder` trait), Section 6.2 query prefix strategy
 **Roadmap stage**: Stage 2 / `v0.3.0`
 **Effort estimate**: S
-**Depends on**: 2.9
+**Depends on**: 2.9, 3.0
 **Blocks**: 3.2, 3.4
 
 ## Objective
@@ -30,7 +30,7 @@ Define the shared async embedding backend contract that ONNX and OpenAI-compatib
 - Create the module before any backend implementation so later tasks compile against one stable interface.
 - Keep the core `embed` method backend-facing and provide public helpers such as `embed_documents` and `embed_query`.
 - Return `crate::error::Result<Vec<Vec<f32>>>` from all embedding paths.
-- Add an `Embed` error variant only if the implementation needs a distinct error category; otherwise use the existing structured variants.
+- Use the embedding/network error variants introduced by task 3.0; do not add ad-hoc error categories here.
 - Keep trait bounds `Send + Sync` so the embedder can be shared by async index/search orchestration.
 
 ## Acceptance criteria
