@@ -1,12 +1,11 @@
 mod onnx;
 mod openai;
 
-// Constructed by the factory in task 3.5; allow until then.
-#[allow(unused_imports)]
 pub use onnx::OnnxEmbedder;
-// Constructed by the factory in task 3.5; allow until then.
-#[allow(unused_imports)]
 pub use openai::OpenAiCompatEmbedder;
+
+use crate::config::Config;
+use crate::error::{Result, VektorError};
 
 /// Shared async embedding backend contract.
 ///
@@ -22,8 +21,8 @@ pub use openai::OpenAiCompatEmbedder;
 /// # Usage
 /// Prefer the provided helpers `embed_documents` / `embed_query` over calling
 /// `embed` directly — they guarantee the correct prefix is applied exactly once.
-// implemented by tasks 3.2 (ONNX) and 3.4 (OpenAI-compat), wired by 3.5 factory;
-// allow dead_code until those tasks land.
+// trait methods used by factory return type Box<dyn Embedder>; trait itself has
+// no external caller until 3.7b; allow dead_code on the trait methods until then.
 #[allow(dead_code)]
 #[async_trait::async_trait]
 pub trait Embedder: Send + Sync {
@@ -96,6 +95,71 @@ pub trait Embedder: Send + Sync {
                 "embedder returned no vector for query".to_string(),
             )
         })
+    }
+}
+
+// ---------------------------------------------------------------------------
+// Factory
+// ---------------------------------------------------------------------------
+
+/// Build the configured embedding backend and return it as `Box<dyn Embedder>`.
+///
+/// Reads `config.embedding.backend` to select among supported backends:
+///
+/// - `"onnx"` → constructs [`OnnxEmbedder`]; fails clearly when model artifacts
+///   are absent (instructs the user to run `vektor models download`).
+/// - `"openai"` → constructs [`OpenAiCompatEmbedder`]; if construction fails
+///   **and** `config.embedding.fallback_to_onnx == true`, falls back to ONNX
+///   once and logs the fallback at `warn` level.  If `fallback_to_onnx` is
+///   `false` the original OpenAI error is returned unchanged.
+/// - `"ollama"` → returns a clear [`VektorError::Config`] stating that the
+///   Ollama backend is deferred (not a silent fallback).
+/// - any other value → returns a clear [`VektorError::Config`] (unsupported).
+///
+/// The factory has no knowledge of indexing, vector storage, or CLI concerns;
+/// those layers call this function and receive a ready-to-use embedder.
+///
+/// # Errors
+/// - [`VektorError::Config`] for unsupported or deferred backends.
+/// - [`VektorError::Embedding`] when ONNX artifact files are missing.
+/// - The original backend error when `fallback_to_onnx` is false and OpenAI
+///   construction fails.
+// called by index pipeline in 3.7b/3.7c; allow until then.
+#[allow(dead_code)]
+pub fn build_embedder(config: &Config) -> Result<Box<dyn Embedder>> {
+    let backend = config.embedding.backend.as_str();
+
+    match backend {
+        "onnx" => {
+            let embedder = OnnxEmbedder::new(config)?;
+            Ok(Box::new(embedder))
+        }
+        "openai" => match OpenAiCompatEmbedder::new(config) {
+            Ok(embedder) => Ok(Box::new(embedder)),
+            Err(openai_err) => {
+                if config.embedding.fallback_to_onnx {
+                    tracing::warn!(
+                        error = %openai_err,
+                        "OpenAI embedder initialization failed; \
+                         falling back to ONNX (fallback_to_onnx = true)"
+                    );
+                    let embedder = OnnxEmbedder::new(config)?;
+                    Ok(Box::new(embedder))
+                } else {
+                    Err(openai_err)
+                }
+            }
+        },
+        "ollama" => Err(VektorError::Config(
+            "the Ollama embedding backend is deferred (not yet implemented); \
+             set backend = \"onnx\" for local inference or backend = \"openai\" \
+             for a cloud-compatible endpoint"
+                .to_string(),
+        )),
+        other => Err(VektorError::Config(format!(
+            "unsupported embedding backend: \"{other}\"; \
+             supported values are \"onnx\" and \"openai\""
+        ))),
     }
 }
 
@@ -344,5 +408,158 @@ mod tests {
         // If the prefix had been applied to the original text in-place (it isn't),
         // the second call would produce "search_query: search_query: alpha".
         assert!(!received[1].starts_with("search_query: search_query:"));
+    }
+
+    // -----------------------------------------------------------------------
+    // build_embedder — factory routing tests
+    //
+    // OnnxEmbedder::new requires real model artifacts on disk (none in CI), so
+    // tests assert on ROUTING DECISIONS rather than successful ONNX construction:
+    //
+    // - backend="onnx"    → error is Embedding (vektor models download hint)
+    // - backend="openai" + empty key + fallback=false → Config error (OpenAI key)
+    // - backend="openai" + empty key + fallback=true  → Embedding error (ONNX path)
+    // - backend="ollama"  → Config error (deferred message)
+    // - backend="zzz"     → Config error (unsupported message)
+    //
+    // HOME/data_dir is isolated via tempdir so real ~/.vektor models are never found.
+    // -----------------------------------------------------------------------
+
+    use crate::config::{EmbeddingConfig, IndexConfig};
+
+    fn factory_config(
+        backend: &str,
+        openai_key: &str,
+        fallback: bool,
+        data_dir: &std::path::Path,
+    ) -> Config {
+        Config {
+            embedding: EmbeddingConfig {
+                backend: backend.to_string(),
+                openai_api_key: openai_key.to_string(),
+                fallback_to_onnx: fallback,
+                ..EmbeddingConfig::default()
+            },
+            index: IndexConfig {
+                data_dir: data_dir.to_string_lossy().into_owned(),
+                ..IndexConfig::default()
+            },
+            ..Config::default()
+        }
+    }
+
+    /// backend="onnx" with no model on disk → routes to ONNX → Embedding error
+    /// with a hint to run `vektor models download`.
+    #[test]
+    fn build_embedder_onnx_backend_routes_to_onnx_and_errors_on_missing_model() {
+        let tempdir = tempfile::tempdir().expect("create tempdir");
+        let config = factory_config("onnx", "", true, tempdir.path());
+
+        // Box<dyn Embedder> is not Debug, so avoid expect_err (which needs T: Debug).
+        let err = build_embedder(&config)
+            .err()
+            .expect("no model → must error");
+
+        assert!(
+            matches!(err, VektorError::Embedding(_)),
+            "expected Embedding error, got: {err:?}"
+        );
+        let msg = err.to_string();
+        assert!(
+            msg.contains("vektor models download"),
+            "error must hint at download: {msg}"
+        );
+    }
+
+    /// backend="openai" + empty key + fallback=false → OpenAI Config error returned.
+    #[test]
+    fn build_embedder_openai_empty_key_no_fallback_returns_openai_config_error() {
+        let tempdir = tempfile::tempdir().expect("create tempdir");
+        let config = factory_config("openai", "", false, tempdir.path());
+
+        // Box<dyn Embedder> is not Debug; use .err().expect instead of expect_err.
+        let err = build_embedder(&config)
+            .err()
+            .expect("empty key → must error");
+
+        assert!(
+            matches!(err, VektorError::Config(_)),
+            "expected Config error (openai key), got: {err:?}"
+        );
+        let msg = err.to_string();
+        assert!(
+            msg.contains("openai_api_key"),
+            "error must mention the missing key field: {msg}"
+        );
+    }
+
+    /// backend="openai" + empty key + fallback=true → falls back to ONNX →
+    /// Embedding error (not the OpenAI Config error), proving the fallback path ran.
+    #[test]
+    fn build_embedder_openai_empty_key_with_fallback_attempts_onnx() {
+        let tempdir = tempfile::tempdir().expect("create tempdir");
+        let config = factory_config("openai", "", true, tempdir.path());
+
+        // Box<dyn Embedder> is not Debug; use .err().expect instead of expect_err.
+        let err = build_embedder(&config)
+            .err()
+            .expect("fallback to ONNX → must error (no model)");
+
+        // If we got Config(openai_api_key …) the fallback never ran; we must see Embedding.
+        assert!(
+            matches!(err, VektorError::Embedding(_)),
+            "expected Embedding error (ONNX path taken), got: {err:?}"
+        );
+        let msg = err.to_string();
+        assert!(
+            msg.contains("vektor models download"),
+            "ONNX path must produce the download hint: {msg}"
+        );
+    }
+
+    /// backend="ollama" → clear deferred-backend Config error, not a silent fallback.
+    #[test]
+    fn build_embedder_ollama_returns_deferred_config_error() {
+        let tempdir = tempfile::tempdir().expect("create tempdir");
+        let config = factory_config("ollama", "", true, tempdir.path());
+
+        // Box<dyn Embedder> is not Debug; use .err().expect instead of expect_err.
+        let err = build_embedder(&config).err().expect("ollama must error");
+
+        assert!(
+            matches!(err, VektorError::Config(_)),
+            "expected Config error for ollama, got: {err:?}"
+        );
+        let msg = err.to_string();
+        assert!(
+            msg.to_lowercase().contains("deferred") || msg.to_lowercase().contains("not yet"),
+            "error must mention deferred/not yet: {msg}"
+        );
+    }
+
+    /// backend="zzz" (unknown) → clear unsupported-backend Config error.
+    #[test]
+    fn build_embedder_unsupported_backend_returns_config_error() {
+        let tempdir = tempfile::tempdir().expect("create tempdir");
+        let config = factory_config("zzz", "", false, tempdir.path());
+
+        // Box<dyn Embedder> is not Debug; use .err().expect instead of expect_err.
+        let err = build_embedder(&config)
+            .err()
+            .expect("unknown backend must error");
+
+        assert!(
+            matches!(err, VektorError::Config(_)),
+            "expected Config error for unknown backend, got: {err:?}"
+        );
+        let msg = err.to_string();
+        assert!(
+            msg.contains("zzz"),
+            "error must echo the unsupported value: {msg}"
+        );
+        assert!(
+            msg.to_lowercase().contains("unsupported"),
+            "error must say unsupported: {msg}"
+        );
     }
 }
