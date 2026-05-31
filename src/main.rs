@@ -5,6 +5,7 @@ mod chunker;
 mod cli;
 mod config;
 mod discovery;
+mod embedder;
 mod error;
 mod mcp;
 mod secrets;
