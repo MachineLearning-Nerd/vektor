@@ -224,7 +224,7 @@ async fn download_artifact(
 
     // 404 / 5xx → clear error naming the path, no secret leakage.
     if !status.is_success() && status != StatusCode::PARTIAL_CONTENT {
-        return Err(VektorError::Config(format!(
+        return Err(VektorError::Download(format!(
             "download failed for '{display_name}': HTTP {status} (url={url})"
         )));
     }

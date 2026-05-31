@@ -43,6 +43,14 @@ pub enum VektorError {
     /// `reqwest::Error` is `Send + Sync + 'static`, so `#[from]` compiles cleanly.
     #[error("network error: {0}")]
     Network(#[from] reqwest::Error),
+
+    /// Model-artifact download failures that are NOT transport-level `reqwest::Error`s
+    /// — e.g. a server returning an HTTP error status (404/5xx) for a model file.
+    /// Distinct from [`Self::Network`] (which wraps `reqwest::Error` for connection/timeout
+    /// failures) and from [`Self::Config`] (which is for configuration problems). Used by
+    /// `vektor models download`.
+    #[error("download error: {0}")]
+    Download(String),
 }
 
 #[cfg(test)]
@@ -111,5 +119,13 @@ mod tests {
             "expected 'network error: ...' but got: {error}"
         );
         assert!(matches!(error, VektorError::Network(_)));
+    }
+
+    #[test]
+    fn display_download_error() {
+        let error = VektorError::Download("HTTP 404 (url=...)".into());
+
+        assert_eq!(error.to_string(), "download error: HTTP 404 (url=...)");
+        assert!(matches!(error, VektorError::Download(_)));
     }
 }
