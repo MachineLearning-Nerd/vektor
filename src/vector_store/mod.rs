@@ -22,6 +22,9 @@ use std::{
     sync::Arc,
 };
 
+use arrow_array::{
+    FixedSizeListArray, Int64Array, RecordBatch, StringArray, UInt32Array, types::Float32Type,
+};
 use lancedb::{
     Connection,
     arrow::arrow_schema::{DataType, Field, Schema, SchemaRef},
@@ -89,12 +92,68 @@ impl StoreMeta {
         }
     }
 
+    /// Persist the metadata atomically: write to a sibling temp file, then
+    /// `fs::rename` over the target. `rename` is atomic on the same filesystem,
+    /// so a crash mid-write leaves the previous `vector_meta.json` intact rather
+    /// than a truncated/empty file (a plain `fs::write` could). The temp file is
+    /// a sibling (same dir => same filesystem) so the rename can't cross devices.
     fn save(&self, path: &Path) -> Result<()> {
         let bytes = serde_json::to_vec_pretty(self)
             .map_err(|e| VektorError::Storage(format!("failed to serialize metadata: {e}")))?;
-        fs::write(path, bytes)?;
+        let tmp_path = path.with_extension("json.tmp");
+        fs::write(&tmp_path, bytes)?;
+        fs::rename(&tmp_path, path)?;
         Ok(())
     }
+}
+
+/// One row to insert into the `chunks` table.
+///
+/// This is the columnar contract shared by the insert path (3.7a/3.7c) and the
+/// delete tests here: callers build a slice of these and hand them to
+/// [`VectorStore::insert_chunks`]. Field names/types mirror the Arrow schema
+/// ([`chunks_schema`]). Note the deliberate differences from
+/// [`crate::chunker::Chunk`]:
+/// - line numbers are `u32` (the schema's `UInt32`), not `usize`;
+/// - `language` is a NON-null `String` — callers map
+///   `Chunk.language: Option<Language>` to a concrete string (e.g. `"unknown"`)
+///   *before* constructing a `ChunkRow`, because the `language` column rejects
+///   nulls. 3.7c must carry that mapping.
+///
+/// `#[allow(dead_code)]`: only the test seed-path constructs these until 3.7a/3.7c
+/// wire up the real insert; allow until then.
+#[allow(dead_code)]
+#[derive(Debug, Clone)]
+pub struct ChunkRow {
+    pub id: String,
+    pub content_hash: String,
+    pub vector: Vec<f32>,
+    pub rel_path: String,
+    pub start_line: u32,
+    pub end_line: u32,
+    pub symbol_name: Option<String>,
+    pub symbol_type: Option<String>,
+    pub language: String,
+    pub content: String,
+    pub last_modified: i64,
+}
+
+/// Escape a string for safe embedding inside a single-quoted SQL string literal
+/// in a LanceDB predicate (e.g. `rel_path = '<escaped>'`).
+///
+/// LanceDB predicates are SQL-like (DataFusion). The only metacharacter inside a
+/// single-quoted literal is the single quote itself, which is escaped by
+/// doubling it (`'` -> `''`) per standard SQL. Everything else — double quotes,
+/// spaces, backslashes, etc. — is literal inside single quotes and needs no
+/// escaping (SQL string literals are not C-style; `\` is not an escape char).
+/// Doubling the quote is what prevents both predicate breakage and injection
+/// (a path like `a' OR '1'='1` becomes the inert literal `a'' OR ''1''=''1`).
+///
+/// `#[allow(dead_code)]`: consumed only via [`VectorStore::delete_by_file`] and
+/// its tests until 3.7c routes deletes through it; allow until then.
+#[allow(dead_code)]
+fn escape_sql_string_literal(value: &str) -> String {
+    value.replace('\'', "''")
 }
 
 /// Embedded LanceDB vector store for a single project.
@@ -219,6 +278,119 @@ impl VectorStore {
             .await
             .map_err(|e| VektorError::Storage(e.to_string()))
     }
+
+    /// Append rows to the `chunks` table.
+    ///
+    /// This is the shared insert primitive: it builds a single Arrow
+    /// `RecordBatch` matching [`chunks_schema`] from `rows` and `Table::add`s it.
+    /// Hoisted to `pub(crate)` so 3.7a/3.7c reuse the exact RecordBatch
+    /// construction instead of re-deriving it (3.9 needs it only to seed delete
+    /// tests, but the columnar mapping is the same contract).
+    ///
+    /// Inserting an empty slice is a no-op (`Ok(())`) — no batch, no churn.
+    ///
+    /// `#[allow(dead_code)]`: no non-test caller until 3.7a/3.7c; allow until then.
+    #[allow(dead_code)]
+    pub(crate) async fn insert_chunks(&self, rows: &[ChunkRow]) -> Result<()> {
+        if rows.is_empty() {
+            return Ok(());
+        }
+
+        let dim = self.meta.embedding_dim;
+        for row in rows {
+            if row.vector.len() != dim {
+                return Err(VektorError::Storage(format!(
+                    "chunk {} vector has {} dims, store expects {}",
+                    row.id,
+                    row.vector.len(),
+                    dim,
+                )));
+            }
+        }
+
+        let schema = chunks_schema(dim);
+
+        let id = StringArray::from_iter_values(rows.iter().map(|r| r.id.as_str()));
+        let content_hash =
+            StringArray::from_iter_values(rows.iter().map(|r| r.content_hash.as_str()));
+        let vector = FixedSizeListArray::from_iter_primitive::<Float32Type, _, _>(
+            rows.iter()
+                .map(|r| Some(r.vector.iter().map(|&f| Some(f)).collect::<Vec<_>>())),
+            dim as i32,
+        );
+        let rel_path = StringArray::from_iter_values(rows.iter().map(|r| r.rel_path.as_str()));
+        let start_line = UInt32Array::from_iter_values(rows.iter().map(|r| r.start_line));
+        let end_line = UInt32Array::from_iter_values(rows.iter().map(|r| r.end_line));
+        let symbol_name: StringArray = rows.iter().map(|r| r.symbol_name.as_deref()).collect();
+        let symbol_type: StringArray = rows.iter().map(|r| r.symbol_type.as_deref()).collect();
+        let language = StringArray::from_iter_values(rows.iter().map(|r| r.language.as_str()));
+        let content = StringArray::from_iter_values(rows.iter().map(|r| r.content.as_str()));
+        let last_modified = Int64Array::from_iter_values(rows.iter().map(|r| r.last_modified));
+
+        let batch = RecordBatch::try_new(
+            schema,
+            vec![
+                Arc::new(id),
+                Arc::new(content_hash),
+                Arc::new(vector),
+                Arc::new(rel_path),
+                Arc::new(start_line),
+                Arc::new(end_line),
+                Arc::new(symbol_name),
+                Arc::new(symbol_type),
+                Arc::new(language),
+                Arc::new(content),
+                Arc::new(last_modified),
+            ],
+        )
+        .map_err(|e| VektorError::Storage(format!("failed to build chunk record batch: {e}")))?;
+
+        let table = self.chunks_table().await?;
+        table
+            .add(batch)
+            .execute()
+            .await
+            .map_err(|e| VektorError::Storage(e.to_string()))?;
+
+        Ok(())
+    }
+
+    /// Delete every chunk row whose `rel_path` exactly equals `rel_path`.
+    ///
+    /// Matching is EXACT (`rel_path = '<escaped>'`), never prefix/glob/substring,
+    /// so deleting `src/a.rs` leaves `src/a.rs.bak` and `src/a/b.rs` untouched.
+    /// The path is escaped via [`escape_sql_string_literal`] before being spliced
+    /// into the predicate, so paths containing `'` (and trivially `"`, spaces,
+    /// backslashes) are handled safely and cannot break or inject the predicate.
+    ///
+    /// Deleting a path with no matching rows is SUCCESS, returning `0`. When rows
+    /// are removed, `chunks_deleted_since` is incremented by the deleted count and
+    /// the metadata is persisted (so ANN-rebuild churn logic can use it).
+    ///
+    /// Returns the number of rows deleted (from LanceDB's `DeleteResult`).
+    ///
+    /// `#[allow(dead_code)]`: no non-test caller until 3.7b/3.7c; allow until then.
+    #[allow(dead_code)]
+    pub(crate) async fn delete_by_file(&mut self, rel_path: &str) -> Result<usize> {
+        let predicate = format!("rel_path = '{}'", escape_sql_string_literal(rel_path));
+
+        let table = self.chunks_table().await?;
+        let result = table
+            .delete(&predicate)
+            .await
+            .map_err(|e| VektorError::Storage(e.to_string()))?;
+
+        let deleted = result.num_deleted_rows as usize;
+        if deleted > 0 {
+            self.meta.chunks_deleted_since = self
+                .meta
+                .chunks_deleted_since
+                .saturating_add(result.num_deleted_rows);
+            self.meta.save(&self.meta_path)?;
+        }
+
+        Ok(deleted)
+    }
 }
 
 /// Arrow schema for the `chunks` table.
@@ -267,6 +439,222 @@ mod tests {
             },
             ..Default::default()
         }
+    }
+
+    /// Build a minimal valid `ChunkRow` for `rel_path` (one row per `id`). The
+    /// vector is a constant `DIM`-length vector — content is irrelevant to the
+    /// delete-by-path contract, only `rel_path` matters here.
+    fn row(id: &str, rel_path: &str) -> ChunkRow {
+        ChunkRow {
+            id: id.to_string(),
+            content_hash: format!("hash-{id}"),
+            vector: vec![0.1_f32; DIM],
+            rel_path: rel_path.to_string(),
+            start_line: 1,
+            end_line: 10,
+            symbol_name: Some("fn_name".to_string()),
+            symbol_type: Some("function".to_string()),
+            language: "rust".to_string(),
+            content: format!("content of {id}"),
+            last_modified: 1_700_000_000,
+        }
+    }
+
+    /// Count rows in the chunks table whose `rel_path` equals `rel_path`.
+    async fn count_for_path(store: &VectorStore, rel_path: &str) -> usize {
+        let table = store.chunks_table().await.expect("open table");
+        let predicate = format!("rel_path = '{}'", escape_sql_string_literal(rel_path));
+        table.count_rows(Some(predicate)).await.expect("count rows")
+    }
+
+    /// Total rows in the chunks table.
+    async fn count_all(store: &VectorStore) -> usize {
+        let table = store.chunks_table().await.expect("open table");
+        table.count_rows(None).await.expect("count rows")
+    }
+
+    #[test]
+    fn escape_sql_string_literal_doubles_single_quotes() {
+        // A bare path is untouched.
+        assert_eq!(escape_sql_string_literal("src/main.rs"), "src/main.rs");
+        // A single quote is doubled (SQL literal escaping).
+        assert_eq!(escape_sql_string_literal("a'b.rs"), "a''b.rs");
+        // Multiple quotes each doubled.
+        assert_eq!(escape_sql_string_literal("''"), "''''");
+        // An injection attempt becomes an inert literal, not breaking the quote.
+        assert_eq!(
+            escape_sql_string_literal("x' OR '1'='1"),
+            "x'' OR ''1''=''1"
+        );
+        // Double quotes, spaces, and backslashes are literal inside single
+        // quotes — they are NOT escaped (SQL literals are not C-style).
+        assert_eq!(escape_sql_string_literal(r#"a b"c\d.rs"#), r#"a b"c\d.rs"#);
+    }
+
+    #[tokio::test]
+    async fn delete_by_file_removes_only_target_rows() {
+        let project = tempfile::tempdir().expect("project");
+        let data_dir = tempfile::tempdir().expect("data dir");
+        let config = config_with_data_dir(data_dir.path());
+
+        let mut store = VectorStore::new(project.path(), &config, DIM, MODEL)
+            .await
+            .expect("create store");
+
+        store
+            .insert_chunks(&[
+                row("a1", "src/a.rs"),
+                row("a2", "src/a.rs"),
+                row("b1", "src/b.rs"),
+            ])
+            .await
+            .expect("seed rows");
+
+        assert_eq!(count_all(&store).await, 3);
+
+        let deleted = store.delete_by_file("src/a.rs").await.expect("delete");
+
+        assert_eq!(deleted, 2, "both rows for the target file are deleted");
+        assert_eq!(
+            count_for_path(&store, "src/a.rs").await,
+            0,
+            "target file rows are gone"
+        );
+        assert_eq!(
+            count_for_path(&store, "src/b.rs").await,
+            1,
+            "other file's row survives"
+        );
+        assert_eq!(count_all(&store).await, 1);
+    }
+
+    #[tokio::test]
+    async fn delete_by_file_is_exact_match_not_prefix() {
+        let project = tempfile::tempdir().expect("project");
+        let data_dir = tempfile::tempdir().expect("data dir");
+        let config = config_with_data_dir(data_dir.path());
+
+        let mut store = VectorStore::new(project.path(), &config, DIM, MODEL)
+            .await
+            .expect("create store");
+
+        store
+            .insert_chunks(&[
+                row("t", "src/a.rs"),
+                row("bak", "src/a.rs.bak"),
+                row("nested", "src/a/b.rs"),
+            ])
+            .await
+            .expect("seed rows");
+
+        let deleted = store.delete_by_file("src/a.rs").await.expect("delete");
+
+        assert_eq!(deleted, 1, "only the exact path matches");
+        assert_eq!(count_for_path(&store, "src/a.rs.bak").await, 1);
+        assert_eq!(count_for_path(&store, "src/a/b.rs").await, 1);
+    }
+
+    #[tokio::test]
+    async fn delete_by_file_missing_path_is_ok_and_returns_zero() {
+        let project = tempfile::tempdir().expect("project");
+        let data_dir = tempfile::tempdir().expect("data dir");
+        let config = config_with_data_dir(data_dir.path());
+
+        let mut store = VectorStore::new(project.path(), &config, DIM, MODEL)
+            .await
+            .expect("create store");
+
+        store
+            .insert_chunks(&[row("b1", "src/b.rs")])
+            .await
+            .expect("seed rows");
+
+        let before = store.meta().chunks_deleted_since;
+        let deleted = store
+            .delete_by_file("does/not/exist.rs")
+            .await
+            .expect("missing path is not an error");
+
+        assert_eq!(deleted, 0);
+        assert_eq!(count_all(&store).await, 1, "untouched");
+        assert_eq!(
+            store.meta().chunks_deleted_since,
+            before,
+            "no churn recorded for a zero-row delete"
+        );
+    }
+
+    #[tokio::test]
+    async fn delete_by_file_handles_quoted_and_special_paths() {
+        let project = tempfile::tempdir().expect("project");
+        let data_dir = tempfile::tempdir().expect("data dir");
+        let config = config_with_data_dir(data_dir.path());
+
+        let mut store = VectorStore::new(project.path(), &config, DIM, MODEL)
+            .await
+            .expect("create store");
+
+        // A path containing a single quote (the dangerous char), plus a benign
+        // neighbor that must survive — proves escaping targets the right rows.
+        let quoted = "src/o'brien's file.rs";
+        store
+            .insert_chunks(&[
+                row("q1", quoted),
+                row("q2", quoted),
+                row("safe", r#"src/a b"c\d.rs"#),
+            ])
+            .await
+            .expect("seed rows");
+
+        let deleted = store.delete_by_file(quoted).await.expect("delete quoted");
+
+        assert_eq!(deleted, 2, "both quoted-path rows deleted");
+        assert_eq!(count_for_path(&store, quoted).await, 0);
+        assert_eq!(
+            count_for_path(&store, r#"src/a b"c\d.rs"#).await,
+            1,
+            "special-char neighbor survives"
+        );
+
+        // Delete the special-char (double-quote/space/backslash) path too.
+        let deleted2 = store
+            .delete_by_file(r#"src/a b"c\d.rs"#)
+            .await
+            .expect("delete special");
+        assert_eq!(deleted2, 1);
+        assert_eq!(count_all(&store).await, 0);
+    }
+
+    #[tokio::test]
+    async fn delete_by_file_increments_and_persists_deleted_churn() {
+        let project = tempfile::tempdir().expect("project");
+        let data_dir = tempfile::tempdir().expect("data dir");
+        let config = config_with_data_dir(data_dir.path());
+
+        let mut store = VectorStore::new(project.path(), &config, DIM, MODEL)
+            .await
+            .expect("create store");
+
+        store
+            .insert_chunks(&[row("a1", "src/a.rs"), row("a2", "src/a.rs")])
+            .await
+            .expect("seed rows");
+
+        assert_eq!(store.meta().chunks_deleted_since, 0);
+        store.delete_by_file("src/a.rs").await.expect("delete");
+        assert_eq!(store.meta().chunks_deleted_since, 2, "in-memory churn");
+
+        // Persisted to the sidecar: reopening the store reads the updated stat
+        // back (which also exercises the atomic save path).
+        drop(store);
+        let reopened = VectorStore::new(project.path(), &config, DIM, MODEL)
+            .await
+            .expect("reopen store");
+        assert_eq!(
+            reopened.meta().chunks_deleted_since,
+            2,
+            "churn persisted across reopen"
+        );
     }
 
     #[tokio::test]

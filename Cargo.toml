@@ -35,7 +35,16 @@ reqwest = { version = "0.13", features = ["json"] }
 # NOTE: Do NOT independently pin arrow versions. Let lancedb dictate the arrow version
 # via its transitive dependency to avoid type-mismatch compilation failures. (v2.3 fix)
 lancedb = "0.29"
-# arrow, arrow-array, arrow-schema versions are inherited from lancedb
+# arrow, arrow-schema versions are inherited from lancedb (it re-exports arrow_schema).
+# arrow-array is NOT re-exported by lancedb 0.29 (only `lancedb::arrow::arrow_schema` is),
+# yet building the RecordBatches that `Table::add` consumes requires its array builders
+# (StringArray, UInt32Array, FixedSizeListArray, ...). We depend on the major version
+# lancedb resolves transitively ("58") rather than an exact pin, so cargo unifies it to
+# the single arrow-array already in the lockfile (58.3.0) — no second arrow version, no
+# type-mismatch trap. This honors the v2.3 "don't independently pin arrow" rule (it's the
+# exact pin, not the dependency edge, that causes the mismatch). Used by 3.9 (insert +
+# delete tests) and reused by 3.7a/3.7c.
+arrow-array = "58"
 
 # Full-Text Search
 tantivy = "0.26"
