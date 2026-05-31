@@ -34,7 +34,13 @@ use ort::value::Tensor;
 use tokenizers::Tokenizer;
 
 use crate::config::Config;
+use crate::embedder::Embedder;
 use crate::error::{Result, VektorError};
+
+/// Maximum number of texts fed to the ONNX session in a single forward pass.
+/// Bounds peak memory and tensor size; larger inputs are chunked into batches
+/// of at most this many rows. Matches the warm-up batch size in task 3.2.
+const MAX_BATCH_SIZE: usize = 32;
 
 /// Local ONNX-backed embedder.
 ///
@@ -175,14 +181,228 @@ impl OnnxEmbedder {
         self.has_token_type_ids
     }
 
-    /// Guarded access to the session for task 3.3's `embed` implementation.
-    pub(crate) fn session(&self) -> &Mutex<Session> {
-        &self.session
+    /// Embed one batch of at most [`MAX_BATCH_SIZE`] already-prefixed texts.
+    ///
+    /// Tokenizes the batch, builds the padded `input_ids` / `attention_mask`
+    /// (and `token_type_ids` when the model needs them), runs the session, then
+    /// masked-mean-pools and L2-normalizes the resulting token embeddings.
+    ///
+    /// The session `run` is blocking; we hold the `Mutex<Session>` guard for the
+    /// duration of the forward pass. The caller wraps the whole batched loop in
+    /// `block_in_place` so this never starves the async runtime (see `embed`).
+    fn embed_batch(&self, texts: &[String]) -> Result<Vec<Vec<f32>>> {
+        debug_assert!(texts.len() <= MAX_BATCH_SIZE);
+
+        let encodings = self
+            .tokenizer
+            .encode_batch(texts.to_vec(), true)
+            .map_err(|error| VektorError::Embedding(format!("tokenization failed: {error}")))?;
+
+        // Pad every row to the batch's longest sequence so the tensor is
+        // rectangular. `seq_len >= 1` keeps tensor construction valid even if a
+        // (degenerate) encoding produced zero tokens.
+        let seq_len = encodings
+            .iter()
+            .map(|enc| enc.get_ids().len())
+            .max()
+            .unwrap_or(0)
+            .max(1);
+        let rows = encodings.len();
+
+        let mut input_ids: Vec<i64> = Vec::with_capacity(rows * seq_len);
+        let mut attention_mask: Vec<i64> = Vec::with_capacity(rows * seq_len);
+        for enc in &encodings {
+            let ids = enc.get_ids();
+            let mask = enc.get_attention_mask();
+            for col in 0..seq_len {
+                input_ids.push(ids.get(col).map(|&id| i64::from(id)).unwrap_or(0));
+                attention_mask.push(mask.get(col).map(|&m| i64::from(m)).unwrap_or(0));
+            }
+        }
+
+        let shape = vec![rows as i64, seq_len as i64];
+        let ids_tensor = Tensor::<i64>::from_array((shape.clone(), input_ids))
+            .map_err(ort_err("build input_ids tensor"))?;
+        let mask_tensor = Tensor::<i64>::from_array((shape.clone(), attention_mask.clone()))
+            .map_err(ort_err("build attention_mask tensor"))?;
+
+        let mut session = self
+            .session
+            .lock()
+            .map_err(|_| VektorError::Embedding("onnx session mutex poisoned".to_string()))?;
+
+        let outputs = if self.has_token_type_ids {
+            let token_type_ids = vec![0i64; rows * seq_len];
+            let tt_tensor = Tensor::<i64>::from_array((shape, token_type_ids))
+                .map_err(ort_err("build token_type_ids tensor"))?;
+            session
+                .run(ort::inputs![
+                    "input_ids" => ids_tensor,
+                    "attention_mask" => mask_tensor,
+                    TOKEN_TYPE_IDS_INPUT => tt_tensor,
+                ])
+                .map_err(ort_err("run embedding session"))?
+        } else {
+            session
+                .run(ort::inputs![
+                    "input_ids" => ids_tensor,
+                    "attention_mask" => mask_tensor,
+                ])
+                .map_err(ort_err("run embedding session"))?
+        };
+
+        // Jina/code models emit `last_hidden_state` shaped [batch, seq, hidden].
+        let (out_shape, data) = outputs[0]
+            .try_extract_tensor::<f32>()
+            .map_err(ort_err("extract embedding output"))?;
+
+        let hidden = dim_from_output_shape(out_shape).ok_or_else(|| {
+            VektorError::Embedding(format!(
+                "embedding output has no usable hidden dimension (shape {out_shape:?})"
+            ))
+        })?;
+        if hidden != self.dim {
+            return Err(VektorError::Embedding(format!(
+                "embedding output hidden dim {hidden} does not match expected dim {}",
+                self.dim
+            )));
+        }
+
+        // Pool into a fresh buffer (copies out of the borrowed `data`), then
+        // normalize per row. `outputs`/`session` stay borrowed until scope end.
+        let pooled = mean_pool(data, &attention_mask, rows, seq_len, hidden);
+        let mut vectors: Vec<Vec<f32>> = pooled.chunks_exact(hidden).map(<[f32]>::to_vec).collect();
+        for vector in &mut vectors {
+            l2_normalize(vector);
+        }
+        Ok(vectors)
+    }
+}
+
+#[async_trait::async_trait]
+impl Embedder for OnnxEmbedder {
+    /// Embed already-prefixed texts (see [`Embedder::embed`]).
+    ///
+    /// Empty input short-circuits without touching ONNX. Otherwise inputs are
+    /// processed in batches of at most [`MAX_BATCH_SIZE`]; each batch is
+    /// tokenized, run through the session, masked-mean-pooled, and
+    /// L2-normalized.
+    ///
+    /// `Session::run` is blocking. On the multi-threaded runtime (the app's
+    /// `#[tokio::main]` default) the batched loop runs inside
+    /// `tokio::task::block_in_place`, which tells the scheduler to offload other
+    /// tasks so the blocking work does not starve the executor. On a
+    /// current-thread runtime `block_in_place` would panic, so we run inline
+    /// there (no sibling workers to starve anyway).
+    async fn embed(&self, texts: &[String]) -> Result<Vec<Vec<f32>>> {
+        if texts.is_empty() {
+            return Ok(Vec::new());
+        }
+
+        let run_batches = || -> Result<Vec<Vec<f32>>> {
+            let mut out: Vec<Vec<f32>> = Vec::with_capacity(texts.len());
+            for batch in texts.chunks(MAX_BATCH_SIZE) {
+                out.extend(self.embed_batch(batch)?);
+            }
+            Ok(out)
+        };
+
+        let on_multi_thread = tokio::runtime::Handle::try_current().is_ok_and(|handle| {
+            handle.runtime_flavor() == tokio::runtime::RuntimeFlavor::MultiThread
+        });
+
+        if on_multi_thread {
+            tokio::task::block_in_place(run_batches)
+        } else {
+            run_batches()
+        }
     }
 
-    /// Tokenizer handle for task 3.3's `embed` implementation.
-    pub(crate) fn tokenizer(&self) -> &Tokenizer {
-        &self.tokenizer
+    fn dim(&self) -> usize {
+        self.dim
+    }
+
+    fn name(&self) -> &str {
+        &self.model_name
+    }
+
+    fn prefix_for_document(&self) -> &str {
+        &self.doc_prefix
+    }
+
+    fn prefix_for_query(&self) -> &str {
+        &self.query_prefix
+    }
+}
+
+// ---------------------------------------------------------------------------
+// Pure pooling / normalization helpers (no ort, fully unit-testable).
+// ---------------------------------------------------------------------------
+
+/// Masked mean-pool a flat `[rows, seq_len, hidden]` token-embedding buffer over
+/// the sequence axis, producing a flat `[rows, hidden]` buffer.
+///
+/// For each row `r` and hidden index `h`:
+/// `pooled[r][h] = Σ_t (token[r][t][h] * mask[r][t]) / Σ_t mask[r][t]`.
+///
+/// Padding tokens (`mask == 0`) contribute nothing to either sum, so they never
+/// affect the result. A row whose mask is entirely zero pools to all-zeros
+/// (division guard) rather than producing NaNs.
+///
+/// `token_embeddings` must have length `rows * seq_len * hidden` and
+/// `attention_mask` length `rows * seq_len`; shorter slices are treated as if
+/// padded with zeros, which keeps the helper total over malformed input.
+fn mean_pool(
+    token_embeddings: &[f32],
+    attention_mask: &[i64],
+    rows: usize,
+    seq_len: usize,
+    hidden: usize,
+) -> Vec<f32> {
+    let mut pooled = vec![0.0f32; rows * hidden];
+    for r in 0..rows {
+        let mut count: f32 = 0.0;
+        for t in 0..seq_len {
+            let mask = attention_mask.get(r * seq_len + t).copied().unwrap_or(0);
+            if mask == 0 {
+                continue;
+            }
+            count += 1.0;
+            let token_base = (r * seq_len + t) * hidden;
+            let pooled_base = r * hidden;
+            for h in 0..hidden {
+                if let Some(&value) = token_embeddings.get(token_base + h) {
+                    pooled[pooled_base + h] += value;
+                }
+            }
+        }
+        if count > 0.0 {
+            let pooled_base = r * hidden;
+            for h in 0..hidden {
+                pooled[pooled_base + h] /= count;
+            }
+        }
+        // count == 0 (all-padding row) leaves this row as zeros by construction.
+    }
+    pooled
+}
+
+/// L2-normalize a single vector in place so `sqrt(Σ x²) == 1.0 ± 1e-5`.
+///
+/// The zero vector is left untouched (norm `0` → no division), so callers never
+/// produce NaNs from an all-zero pooled row.
+fn l2_normalize(vector: &mut [f32]) {
+    let norm = vector
+        .iter()
+        .map(|&x| f64::from(x) * f64::from(x))
+        .sum::<f64>()
+        .sqrt();
+    if norm == 0.0 {
+        return;
+    }
+    let inv = (1.0 / norm) as f32;
+    for value in vector.iter_mut() {
+        *value *= inv;
     }
 }
 
@@ -621,5 +841,173 @@ mod tests {
         // Jina v2 base code is 768-dim; assertion is informational.
         assert!(embedder.dim() == 768 || embedder.dim() == 384);
         assert_eq!(embedder.name(), config.embedding.onnx_model);
+    }
+
+    // -----------------------------------------------------------------------
+    // mean_pool — pure, synthetic, known-answer
+    // -----------------------------------------------------------------------
+
+    /// Single row, two tokens, hidden=2, both tokens active → arithmetic mean.
+    #[test]
+    fn onnx_embedder_mean_pool_averages_active_tokens() {
+        // token[0] = [1, 2], token[1] = [3, 6]; mask = [1, 1].
+        // pooled = ([1+3]/2, [2+6]/2) = (2, 4).
+        let tokens = vec![1.0, 2.0, 3.0, 6.0];
+        let mask = vec![1, 1];
+        let pooled = mean_pool(&tokens, &mask, 1, 2, 2);
+        assert_eq!(pooled, vec![2.0, 4.0]);
+    }
+
+    /// Masked token must be ignored entirely: a 2-token seq with mask [1, 0]
+    /// pools to exactly token 0 (the canonical padding-is-ignored proof).
+    #[test]
+    fn onnx_embedder_mean_pool_ignores_masked_tokens() {
+        // token[0] = [10, 20] (active), token[1] = [999, 999] (padding).
+        let tokens = vec![10.0, 20.0, 999.0, 999.0];
+        let mask = vec![1, 0];
+        let pooled = mean_pool(&tokens, &mask, 1, 2, 2);
+        // Only token 0 contributes; count = 1.
+        assert_eq!(pooled, vec![10.0, 20.0]);
+    }
+
+    /// All-padding row pools to zeros (division guard) instead of NaN.
+    #[test]
+    fn onnx_embedder_mean_pool_all_padding_row_is_zero() {
+        let tokens = vec![5.0, 7.0, 9.0, 11.0];
+        let mask = vec![0, 0];
+        let pooled = mean_pool(&tokens, &mask, 1, 2, 2);
+        assert_eq!(pooled, vec![0.0, 0.0]);
+        assert!(pooled.iter().all(|x| !x.is_nan()));
+    }
+
+    /// Two independent rows pool independently; per-row masks are respected.
+    #[test]
+    fn onnx_embedder_mean_pool_multiple_rows_independent() {
+        // row0: tokens [1,1],[3,3] mask [1,1] → mean [2,2]
+        // row1: tokens [4,8],[100,100] mask [1,0] → [4,8]
+        let tokens = vec![
+            1.0, 1.0, 3.0, 3.0, // row 0
+            4.0, 8.0, 100.0, 100.0, // row 1
+        ];
+        let mask = vec![1, 1, 1, 0];
+        let pooled = mean_pool(&tokens, &mask, 2, 2, 2);
+        assert_eq!(pooled, vec![2.0, 2.0, 4.0, 8.0]);
+    }
+
+    // -----------------------------------------------------------------------
+    // l2_normalize — pure, synthetic, known-answer
+    // -----------------------------------------------------------------------
+
+    /// 3-4-5 triangle: [3,4] has norm 5 → normalizes to [0.6, 0.8].
+    #[test]
+    fn onnx_embedder_l2_normalize_known_vector() {
+        let mut v = vec![3.0f32, 4.0];
+        l2_normalize(&mut v);
+        assert!((v[0] - 0.6).abs() < 1e-6, "v0={}", v[0]);
+        assert!((v[1] - 0.8).abs() < 1e-6, "v1={}", v[1]);
+    }
+
+    /// After normalization the L2 norm is 1.0 ± 1e-5 for an arbitrary vector.
+    #[test]
+    fn onnx_embedder_l2_normalize_yields_unit_norm() {
+        let mut v = vec![0.5f32, -1.5, 2.0, 7.0, -0.25, 3.3];
+        l2_normalize(&mut v);
+        let norm = v.iter().map(|&x| x * x).sum::<f32>().sqrt();
+        assert!((norm - 1.0).abs() < 1e-5, "norm={norm}");
+    }
+
+    /// Zero vector stays zero (no divide-by-zero / NaN).
+    #[test]
+    fn onnx_embedder_l2_normalize_zero_vector_unchanged() {
+        let mut v = vec![0.0f32; 4];
+        l2_normalize(&mut v);
+        assert_eq!(v, vec![0.0f32; 4]);
+        assert!(v.iter().all(|x| !x.is_nan()));
+    }
+
+    /// Composed pipeline mirror of `embed_batch`'s tail: pool then normalize a
+    /// masked synthetic batch and confirm every non-zero row is unit-norm.
+    #[test]
+    fn onnx_embedder_pool_then_normalize_unit_norm() {
+        // rows=2, seq=2, hidden=3. Row 1's second token is padding.
+        let tokens = vec![
+            1.0, 2.0, 2.0, 0.0, 0.0, 0.0, // row 0: only token 0 active below
+            9.0, 9.0, 9.0, 1.0, 1.0, 1.0, // row 1
+        ];
+        let mask = vec![1, 0, 1, 0];
+        let pooled = mean_pool(&tokens, &mask, 2, 2, 3);
+        let mut vectors: Vec<Vec<f32>> = pooled.chunks_exact(3).map(<[f32]>::to_vec).collect();
+        for v in &mut vectors {
+            l2_normalize(v);
+        }
+        for v in &vectors {
+            let norm = v.iter().map(|&x| x * x).sum::<f32>().sqrt();
+            assert!((norm - 1.0).abs() < 1e-5, "norm={norm} vec={v:?}");
+        }
+    }
+
+    // -----------------------------------------------------------------------
+    // Embedder::embed — empty-input short-circuit (no ONNX, no model needed)
+    // -----------------------------------------------------------------------
+
+    /// Empty input returns an empty Vec and must NOT construct/lock a session.
+    /// Building an embedder requires a model, so we exercise the documented
+    /// short-circuit contract directly: the loop body only runs for non-empty
+    /// input, so an empty slice yields an empty result without ONNX.
+    #[tokio::test(flavor = "multi_thread")]
+    async fn onnx_embedder_embed_empty_input_short_circuits() {
+        // We cannot build a real OnnxEmbedder without a downloaded model, so
+        // assert the invariant the `embed` body relies on: chunking an empty
+        // slice produces zero batches, hence zero ONNX calls.
+        let texts: Vec<String> = Vec::new();
+        let batches: Vec<&[String]> = texts.chunks(MAX_BATCH_SIZE).collect();
+        assert!(batches.is_empty());
+    }
+
+    /// Batching invariant: every chunk has at most `MAX_BATCH_SIZE` rows and the
+    /// row count is preserved across chunking.
+    #[test]
+    fn onnx_embedder_chunks_respect_max_batch_size() {
+        let texts: Vec<String> = (0..70).map(|i| format!("t{i}")).collect();
+        let chunks: Vec<&[String]> = texts.chunks(MAX_BATCH_SIZE).collect();
+        assert_eq!(chunks.len(), 3); // 32 + 32 + 6
+        assert!(chunks.iter().all(|c| c.len() <= MAX_BATCH_SIZE));
+        assert_eq!(chunks.iter().map(|c| c.len()).sum::<usize>(), 70);
+        assert_eq!(chunks[0].len(), 32);
+        assert_eq!(chunks[2].len(), 6);
+    }
+
+    /// Full real-model embed smoke test: prefix-through-tokenization plus the
+    /// embed math end to end. Ignored — needs a downloaded model.
+    ///
+    /// Run: `cargo test onnx_embedder -- --ignored --nocapture`
+    #[tokio::test(flavor = "multi_thread")]
+    #[ignore = "requires a downloaded model; run manually after `vektor models download`"]
+    async fn onnx_embedder_embed_real_model_unit_norm_and_prefixes() {
+        let config = Config::default();
+        let embedder = OnnxEmbedder::new(&config).expect("construct onnx embedder");
+
+        // N texts → N vectors, each of length dim(), each unit-norm.
+        let docs = vec!["fn add(a: i32, b: i32) -> i32 { a + b }".to_string()];
+        let doc_vecs = embedder.embed_documents(&docs).await.expect("embed docs");
+        assert_eq!(doc_vecs.len(), 1);
+        assert_eq!(doc_vecs[0].len(), embedder.dim());
+        let norm = doc_vecs[0].iter().map(|&x| x * x).sum::<f32>().sqrt();
+        assert!((norm - 1.0).abs() < 1e-5, "doc norm={norm}");
+
+        // Query path applies the query prefix then embeds to a single vector.
+        let q = embedder
+            .embed_query("how do I add two integers")
+            .await
+            .expect("embed query");
+        assert_eq!(q.len(), embedder.dim());
+        let qnorm = q.iter().map(|&x| x * x).sum::<f32>().sqrt();
+        assert!((qnorm - 1.0).abs() < 1e-5, "query norm={qnorm}");
+
+        // Larger-than-one-batch input still returns one vector per text.
+        let many: Vec<String> = (0..40).map(|i| format!("let x{i} = {i};")).collect();
+        let many_vecs = embedder.embed_documents(&many).await.expect("embed many");
+        assert_eq!(many_vecs.len(), 40);
+        assert!(many_vecs.iter().all(|v| v.len() == embedder.dim()));
     }
 }
