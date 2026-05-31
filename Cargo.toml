@@ -70,6 +70,9 @@ regex = "1"
 [dev-dependencies]
 temp-env = "0.3"
 tempfile = "3"
+# wiremock: async HTTP mock server used by task 3.4 (openai.rs) tests.
+# Dev-only — zero prod dependency surface. Integrates directly with tokio + reqwest.
+wiremock = "0.6"
 
 # Phase 2 (uncomment when needed)
 # git2 = "0.21"

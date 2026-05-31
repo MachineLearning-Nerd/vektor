@@ -1,8 +1,12 @@
 mod onnx;
+mod openai;
 
 // Constructed by the factory in task 3.5; allow until then.
 #[allow(unused_imports)]
 pub use onnx::OnnxEmbedder;
+// Constructed by the factory in task 3.5; allow until then.
+#[allow(unused_imports)]
+pub use openai::OpenAiCompatEmbedder;
 
 /// Shared async embedding backend contract.
 ///
