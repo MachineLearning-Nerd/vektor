@@ -64,6 +64,9 @@ where
         .ok_or_else(|| "missing or non-string `path` argument".to_string())?
         .to_string();
 
+    reject_unsupported_arg(&args, "extensions")?;
+    reject_unsupported_arg(&args, "embedding_backend")?;
+
     // MCP advertises `force_full`; the CLI calls the same flag `force`.
     let force = args
         .get("force_full")
@@ -74,6 +77,15 @@ where
 
     let stats = indexer(path, force).await?;
     Ok(stats_to_json(&stats))
+}
+
+fn reject_unsupported_arg(args: &JsonObject, name: &str) -> Result<(), String> {
+    if args.contains_key(name) {
+        return Err(format!(
+            "`{name}` is advertised by the index_codebase schema but is not supported by the Phase 3 vector-only handler yet"
+        ));
+    }
+    Ok(())
 }
 
 /// Map run-level [`IndexStats`] to the tool's success JSON response.
@@ -180,6 +192,45 @@ mod tests {
                 .contains("path"),
             "error must mention the required path argument: {response}"
         );
+    }
+
+    #[tokio::test]
+    async fn index_codebase_rejects_extensions_until_supported() {
+        let tempdir = tempfile::tempdir().expect("tempdir");
+        let mut args = JsonObject::new();
+        args.insert(
+            "path".into(),
+            Value::String(tempdir.path().to_string_lossy().into_owned()),
+        );
+        args.insert(
+            "extensions".into(),
+            Value::Array(vec![Value::String("rs".into())]),
+        );
+
+        let response = handle_index_codebase(Some(args)).await;
+
+        assert_eq!(response["status"], "error");
+        let error = response["error"].as_str().expect("error string");
+        assert!(error.contains("extensions"), "{response}");
+        assert!(error.contains("not supported"), "{response}");
+    }
+
+    #[tokio::test]
+    async fn index_codebase_rejects_embedding_backend_until_supported() {
+        let tempdir = tempfile::tempdir().expect("tempdir");
+        let mut args = JsonObject::new();
+        args.insert(
+            "path".into(),
+            Value::String(tempdir.path().to_string_lossy().into_owned()),
+        );
+        args.insert("embedding_backend".into(), Value::String("openai".into()));
+
+        let response = handle_index_codebase(Some(args)).await;
+
+        assert_eq!(response["status"], "error");
+        let error = response["error"].as_str().expect("error string");
+        assert!(error.contains("embedding_backend"), "{response}");
+        assert!(error.contains("not supported"), "{response}");
     }
 
     /// End-to-end through the tool flow with a FAKE embedder seam: indexes a real

@@ -57,14 +57,43 @@ fn dump_chunks_directory_discovers_files_deterministically() {
     assert!(a_pos < b_pos, "{stdout}");
 }
 
+#[test]
+fn dump_chunks_skips_secret_bearing_chunks_before_stdout() {
+    let fixture = tempfile::tempdir().expect("create fixture");
+    let fake_home = tempfile::tempdir().expect("create fake home");
+    let secret = "AWS_ACCESS_KEY_ID=AKIAIOSFODNN7EXAMPLE";
+    write_file(
+        fixture.path().join("notes.txt"),
+        &format!("safe filename\n{secret}\n"),
+    );
+
+    let output = run_vektor(
+        &fake_home,
+        vec![
+            str_arg("index"),
+            str_arg("--dump-chunks"),
+            path_arg(fixture.path()),
+        ],
+    );
+
+    assert_success(&output);
+    let stdout = stdout(&output);
+    assert!(!stdout.contains(secret), "{stdout}");
+    assert!(
+        !fake_home.path().join(".vektor").exists(),
+        "--dump-chunks must stay read-only"
+    );
+}
+
 // Real `vektor index` (no `--dump-chunks`) now builds the embedder + LanceDB
 // store via the shared Phase 3 index core, which requires a downloaded ONNX
 // model. These end-to-end tests are #[ignore]d so CI needs no model download;
-// run them manually after `vektor models download`. The equivalent
+// see release-notes-v0.3.0.md for the canonical downloaded-model manual CLI
+// commands. The equivalent
 // changed/unchanged/force, content-hash reuse, and non-UTF-8 behaviour is
 // covered without a model by the fake-embedder seam tests in `src/cli.rs`.
 #[test]
-#[ignore = "requires downloaded ONNX model (run after `vektor models download`)"]
+#[ignore = "requires downloaded ONNX model; see release-notes manual CLI commands"]
 fn index_cli_tracks_changed_unchanged_and_force_with_isolated_state() {
     let fixture = tempfile::tempdir().expect("create fixture");
     let fake_home = tempfile::tempdir().expect("create fake home");
@@ -102,7 +131,7 @@ fn index_cli_tracks_changed_unchanged_and_force_with_isolated_state() {
 }
 
 #[test]
-#[ignore = "requires downloaded ONNX model (run after `vektor models download`)"]
+#[ignore = "requires downloaded ONNX model; see release-notes manual CLI commands"]
 fn index_cli_uses_parent_relative_state_keys_for_file_inputs() {
     let fixture = tempfile::tempdir().expect("create fixture");
     let fake_home = tempfile::tempdir().expect("create fake home");
@@ -128,7 +157,7 @@ fn index_cli_uses_parent_relative_state_keys_for_file_inputs() {
 }
 
 #[test]
-#[ignore = "requires downloaded ONNX model (run after `vektor models download`)"]
+#[ignore = "requires downloaded ONNX model; see release-notes manual CLI commands"]
 fn index_cli_chunks_readable_non_utf8_files_without_marking_failed() {
     let fixture = tempfile::tempdir().expect("create fixture");
     let fake_home = tempfile::tempdir().expect("create fake home");

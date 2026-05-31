@@ -298,6 +298,14 @@ fn dump_chunks(files: &[IndexFile], config: &crate::config::Config) -> Result<()
         let content = read_file_lossy(&file.path)?;
         let chunks = chunk_file(Path::new(&file.rel_path), &content, config);
         for chunk in chunks {
+            if detector.contains_secret(&chunk.content) {
+                tracing::warn!(
+                    path = %file.rel_path,
+                    chunk_id = %chunk.id,
+                    "dump_chunks: skipping chunk with potential secret"
+                );
+                continue;
+            }
             print_chunk(&chunk);
         }
     }

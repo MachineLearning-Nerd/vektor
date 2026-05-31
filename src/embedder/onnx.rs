@@ -1,7 +1,7 @@
 //! Local ONNX embedding backend (task 3.2 — construction + warm-up).
 //!
 //! This module only builds the [`OnnxEmbedder`] and warms its `ort` session.
-//! The [`Embedder`](crate::embedder::Embedder) trait implementation
+//! The [`Embedder`] trait implementation
 //! (tokenize → run → mean-pool → L2-normalize → batch) lands in task 3.3,
 //! and the embedder is constructed by the factory in task 3.5. Until then the
 //! struct is dead from the compiler's point of view, so the few items the

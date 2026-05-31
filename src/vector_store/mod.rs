@@ -292,7 +292,7 @@ impl VectorStore {
     /// tests, but the columnar mapping is the same contract).
     ///
     /// Inserting an empty slice is a no-op (`Ok(())`) — no batch, no churn.
-    pub(crate) async fn insert_chunks(&self, rows: &[ChunkRow]) -> Result<()> {
+    pub(crate) async fn insert_chunks(&mut self, rows: &[ChunkRow]) -> Result<()> {
         if rows.is_empty() {
             return Ok(());
         }
@@ -352,6 +352,12 @@ impl VectorStore {
             .execute()
             .await
             .map_err(|e| VektorError::Storage(e.to_string()))?;
+
+        self.meta.chunks_inserted_since = self
+            .meta
+            .chunks_inserted_since
+            .saturating_add(rows.len() as u64);
+        self.meta.save(&self.meta_path)?;
 
         Ok(())
     }
@@ -1115,6 +1121,31 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn insert_chunks_increments_and_persists_inserted_churn() {
+        let project = tempfile::tempdir().expect("project");
+        let data_dir = tempfile::tempdir().expect("data dir");
+        let config = config_with_data_dir(data_dir.path());
+
+        let mut store = VectorStore::new(project.path(), &config, DIM, MODEL)
+            .await
+            .expect("create store");
+        assert_eq!(store.meta().chunks_inserted_since, 0);
+
+        store
+            .insert_chunks(&[row("a1", "src/a.rs"), row("a2", "src/a.rs")])
+            .await
+            .expect("insert rows");
+
+        assert_eq!(store.meta().chunks_inserted_since, 2);
+        drop(store);
+
+        let reopened = VectorStore::new(project.path(), &config, DIM, MODEL)
+            .await
+            .expect("reopen store");
+        assert_eq!(reopened.meta().chunks_inserted_since, 2);
+    }
+
+    #[tokio::test]
     async fn delete_by_file_is_exact_match_not_prefix() {
         let project = tempfile::tempdir().expect("project");
         let data_dir = tempfile::tempdir().expect("data dir");
@@ -1252,7 +1283,7 @@ mod tests {
         let data_dir = tempfile::tempdir().expect("data dir");
         let config = config_with_data_dir(data_dir.path());
 
-        let store = VectorStore::new(project.path(), &config, DIM, MODEL)
+        let mut store = VectorStore::new(project.path(), &config, DIM, MODEL)
             .await
             .expect("create store");
 
@@ -1291,7 +1322,7 @@ mod tests {
         let data_dir = tempfile::tempdir().expect("data dir");
         let config = config_with_data_dir(data_dir.path());
 
-        let store = VectorStore::new(project.path(), &config, DIM, MODEL)
+        let mut store = VectorStore::new(project.path(), &config, DIM, MODEL)
             .await
             .expect("create store");
 
@@ -1317,7 +1348,7 @@ mod tests {
         let data_dir = tempfile::tempdir().expect("data dir");
         let config = config_with_data_dir(data_dir.path());
 
-        let store = VectorStore::new(project.path(), &config, DIM, MODEL)
+        let mut store = VectorStore::new(project.path(), &config, DIM, MODEL)
             .await
             .expect("create store");
 
@@ -1343,7 +1374,7 @@ mod tests {
         let data_dir = tempfile::tempdir().expect("data dir");
         let config = config_with_data_dir(data_dir.path());
 
-        let store = VectorStore::new(project.path(), &config, DIM, MODEL)
+        let mut store = VectorStore::new(project.path(), &config, DIM, MODEL)
             .await
             .expect("create store");
 
@@ -1384,7 +1415,7 @@ mod tests {
         let data_dir = tempfile::tempdir().expect("data dir");
         let config = config_with_data_dir(data_dir.path());
 
-        let store = VectorStore::new(project.path(), &config, DIM, MODEL)
+        let mut store = VectorStore::new(project.path(), &config, DIM, MODEL)
             .await
             .expect("create store");
 
@@ -2183,7 +2214,7 @@ mod tests {
     async fn vector_store_search_top_k_zero_returns_empty() {
         let project = tempfile::tempdir().expect("project");
         let data_dir = tempfile::tempdir().expect("data dir");
-        let store = search_store(project.path(), data_dir.path()).await;
+        let mut store = search_store(project.path(), data_dir.path()).await;
 
         // Seed some rows so the table is non-empty — search must still be a no-op.
         store
@@ -2251,7 +2282,7 @@ mod tests {
         //   "far":      [-1, 0, 0, 0] → L2 = (1-(-1))^2 = 4
         let project = tempfile::tempdir().expect("project");
         let data_dir = tempfile::tempdir().expect("data dir");
-        let store = search_store(project.path(), data_dir.path()).await;
+        let mut store = search_store(project.path(), data_dir.path()).await;
 
         store
             .insert_chunks(&[
@@ -2324,7 +2355,7 @@ mod tests {
     async fn vector_store_search_all_metadata_fields_correct() {
         let project = tempfile::tempdir().expect("project");
         let data_dir = tempfile::tempdir().expect("data dir");
-        let store = search_store(project.path(), data_dir.path()).await;
+        let mut store = search_store(project.path(), data_dir.path()).await;
 
         // One row with all fields populated.
         let mut row = search_row(
@@ -2370,7 +2401,7 @@ mod tests {
     async fn vector_store_search_null_symbol_fields_round_trip() {
         let project = tempfile::tempdir().expect("project");
         let data_dir = tempfile::tempdir().expect("data dir");
-        let store = search_store(project.path(), data_dir.path()).await;
+        let mut store = search_store(project.path(), data_dir.path()).await;
 
         store
             .insert_chunks(&[search_row(
@@ -2400,7 +2431,7 @@ mod tests {
     async fn vector_store_search_top_k_limits_results() {
         let project = tempfile::tempdir().expect("project");
         let data_dir = tempfile::tempdir().expect("data dir");
-        let store = search_store(project.path(), data_dir.path()).await;
+        let mut store = search_store(project.path(), data_dir.path()).await;
 
         // Seed 5 rows.
         let rows: Vec<ChunkRow> = (0..5_u32)
@@ -2435,7 +2466,7 @@ mod tests {
         // A filter for "language = 'rust'" must return only rust rows.
         let project = tempfile::tempdir().expect("project");
         let data_dir = tempfile::tempdir().expect("data dir");
-        let store = search_store(project.path(), data_dir.path()).await;
+        let mut store = search_store(project.path(), data_dir.path()).await;
 
         store
             .insert_chunks(&[
@@ -2482,7 +2513,7 @@ mod tests {
     async fn vector_store_search_filter_by_rel_path() {
         let project = tempfile::tempdir().expect("project");
         let data_dir = tempfile::tempdir().expect("data dir");
-        let store = search_store(project.path(), data_dir.path()).await;
+        let mut store = search_store(project.path(), data_dir.path()).await;
 
         store
             .insert_chunks(&[

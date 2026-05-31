@@ -42,7 +42,7 @@ run manually after `vektor models download` (no network/model in CI). See
 
 - [x] All 15 task files above marked ✅ Done
 - [~] `vektor models download` produces `~/.vektor/models/jinaai--jina-embeddings-v2-base-code/onnx/model.onnx` + `tokenizer.json` — **manual** (`#[ignore]`d HF smoke tests; needs network)
-- [~] `vektor index <repo>` chunks files (Phase 2), embeds them (3.3), and writes to `~/.vektor/<project>/lance/` (3.7c) — **manual** (`#[ignore]`d `index_cli` tests; needs downloaded model)
+- [~] `vektor index <repo>` chunks files (Phase 2), embeds them (3.3), and writes to `~/.vektor/<project>/lance/` (3.7c) — **manual** (direct `vektor index src/` commands in `release-notes-v0.3.0.md`; needs downloaded model)
 - [x] `index_codebase` MCP tool indexes a repo via the same shared core as the CLI and returns real stats (vector-only in Phase 3; BM25 added in Phase 4 task 4.6) — no longer the not-implemented stub (verified via fake-embedder MCP handler test)
 - [x] Running `vektor index` twice on an unchanged repo skips re-embedding (chunk-level cache via content_hash works) — verified via `vector_store` reuse/`plan_reindex` tests
 - [x] Modifying one function in a 10-file repo re-embeds only the changed chunks, not the whole file (per PRD §4.5 fix) — verified via reindex-reuse tests
@@ -55,7 +55,7 @@ run manually after `vektor models download` (no network/model in CI). See
 - [x] Phase 4 per-task files written before Phase 4 starts — `01-..08-*.md` under `phase-4-search-mcp/`
 
 > Legend: `[x]` verified by the runnable test suite (`cargo test --workspace`,
-> 224 passed / 7 ignored); `[~]` model/network-dependent or outward-facing —
+> 231 passed / 7 ignored); `[~]` model/network-dependent or outward-facing —
 > covered by `#[ignore]`d smoke tests / documented manual commands.
 
 ---

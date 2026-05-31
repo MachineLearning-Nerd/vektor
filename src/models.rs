@@ -2,7 +2,7 @@
 //!
 //! Downloads the required ONNX model artifacts (tokenizer + ONNX graph) from
 //! HuggingFace into the local model cache directory used by
-//! [`crate::embedder::onnx::OnnxEmbedder`]. The download path scheme matches
+//! [`crate::embedder::OnnxEmbedder`]. The download path scheme matches
 //! task 3.2 exactly: `<data_dir>/models/<safe-model-name>/`, where `safe-model-name`
 //! replaces `/` with `--`.
 //!
@@ -291,7 +291,7 @@ fn part_file_path(dest: &Path) -> PathBuf {
 }
 
 /// Resolve `<data_dir>/models/<safe-model-name>/` using the same expansion
-/// rules as [`crate::embedder::onnx`] (task 3.2) so paths match exactly.
+/// rules as the ONNX embedder (task 3.2) so paths match exactly.
 fn resolve_model_dir(model_name: &str, config: &Config) -> Result<PathBuf> {
     let base = expand_data_dir(&config.index.data_dir)?;
     let safe = model_name.replace('/', "--");

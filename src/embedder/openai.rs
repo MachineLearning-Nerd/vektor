@@ -349,6 +349,17 @@ fn order_embeddings(mut records: Vec<EmbedRecord>, expected: usize) -> Result<Ve
         )));
     }
 
+    for (expected_index, record) in records.iter().enumerate() {
+        if record.index != expected_index {
+            return Err(VektorError::Embedding(format!(
+                "embeddings response index mismatch: expected index {expected_index}, got {}; \
+                 response indexes must be a complete 0..{} sequence",
+                record.index,
+                expected.saturating_sub(1)
+            )));
+        }
+    }
+
     Ok(records.into_iter().map(|r| r.embedding).collect())
 }
 
@@ -525,6 +536,44 @@ mod tests {
         let msg = err.to_string();
         assert!(msg.contains("1"), "msg: {msg}");
         assert!(msg.contains("3"), "msg: {msg}");
+    }
+
+    #[test]
+    fn openai_compat_embedder_order_embeddings_errors_on_duplicate_index() {
+        let records = vec![
+            EmbedRecord {
+                embedding: vec![0.0],
+                index: 0,
+            },
+            EmbedRecord {
+                embedding: vec![1.0],
+                index: 0,
+            },
+        ];
+
+        let err = order_embeddings(records, 2).expect_err("duplicate index must error");
+        assert!(matches!(err, VektorError::Embedding(_)));
+        let msg = err.to_string();
+        assert!(msg.contains("index"), "msg: {msg}");
+    }
+
+    #[test]
+    fn openai_compat_embedder_order_embeddings_errors_on_missing_index() {
+        let records = vec![
+            EmbedRecord {
+                embedding: vec![0.0],
+                index: 0,
+            },
+            EmbedRecord {
+                embedding: vec![2.0],
+                index: 2,
+            },
+        ];
+
+        let err = order_embeddings(records, 2).expect_err("missing index must error");
+        assert!(matches!(err, VektorError::Embedding(_)));
+        let msg = err.to_string();
+        assert!(msg.contains("index"), "msg: {msg}");
     }
 
     // -----------------------------------------------------------------------

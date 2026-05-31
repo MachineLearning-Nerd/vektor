@@ -75,15 +75,15 @@ standard test suite.
 | All 15 Phase 3 task files marked ✅ Done | ✅ Verified | Phase 3 README / DEPENDENCIES.md updated with commit hashes |
 | `cargo fmt --check` | ✅ Verified | clean (exit 0) |
 | `cargo clippy --workspace --all-targets -- -D warnings` | ✅ Verified | clean (exit 0) |
-| `cargo test --workspace` | ✅ Verified | 225 passed, 0 failed, 7 ignored |
+| `cargo test --workspace` | ✅ Verified | 231 passed, 0 failed, 7 ignored |
 | LanceDB table has the full PRD §4.10 schema | ✅ Verified | `vector_store` schema + insert/search/delete unit tests |
-| Re-run on unchanged repo skips re-embedding (content_hash cache) | ✅ Verified | `vector_store` reuse/`plan_reindex` tests + `index_cli` (model-gated for the real-model path) |
+| Re-run on unchanged repo skips re-embedding (content_hash cache) | ✅ Verified | `vector_store` reuse/`plan_reindex` tests; full downloaded-model CLI check is manual |
 | One-function edit re-embeds only changed chunks | ✅ Verified | `vector_store` reindex-reuse tests with a fake embedder |
 | AWS key (`AKIAIOSFODNN7EXAMPLE`) chunk is skipped + logged | ✅ Verified | `secrets` tests + `index_codebase` MCP test asserts `skipped_secrets >= 1` |
 | `.env` file is never read into memory | ✅ Verified | discovery file-level skip-list tests (B1.5) |
 | OpenAI-compatible backend path works | ✅ Verified | `openai` embedder tests against a `wiremock` mock server |
 | `vektor models download` produces `model.onnx` + `tokenizer.json` | ⏳ Manual | `#[ignore]`d HF smoke tests — requires network. Run manually (see below) |
-| `vektor index <repo>` writes LanceDB vectors end-to-end | ⏳ Manual | `#[ignore]`d `index_cli` tests — requires a downloaded ONNX model |
+| `vektor index <repo>` writes LanceDB vectors end-to-end | ⏳ Manual | direct `vektor index src/` commands below with an isolated downloaded model |
 | First-query cold-start latency <5s (ONNX warm-up) | ⏳ Manual | warm-up implemented in `OnnxEmbedder::new`; latency measured manually after model download |
 | Switching backend `onnx` → `openai` indexes via cloud | ⏳ Manual | unit-verified via mock; full E2E with a real key is a manual check |
 | Phase 4 per-task files written before Phase 4 starts | ✅ Verified | `docs/plans/initial/phase-4-search-mcp/01-..08-*.md` |
@@ -91,21 +91,23 @@ standard test suite.
 
 ### Running the model-dependent checks manually
 
-After a model download, run the ignored smoke + end-to-end tests:
+After a model download, run the ignored smoke tests and direct end-to-end CLI
+commands:
 
 ```bash
-# Download the model into an isolated home (so it doesn't touch ~/.vektor)
+# Download the default Jina model into an isolated home (so it doesn't touch ~/.vektor).
+# This matches Config::default(); if you use --lite instead, set
+# VEKTOR__EMBEDDING__ONNX_MODEL=BAAI/bge-small-en-v1.5 for the ONNX/index checks.
 FAKE_HOME=$(mktemp -d)
-HOME="$FAKE_HOME" USERPROFILE="$FAKE_HOME" cargo run --release -- models download --lite
+HOME="$FAKE_HOME" USERPROFILE="$FAKE_HOME" cargo run --release -- models download
 
 # Real-model unit smoke tests (ONNX load + embed; HF download smoke)
-cargo test models_download -- --ignored --nocapture
-cargo test onnx_embedder -- --ignored --nocapture
+HOME="$FAKE_HOME" USERPROFILE="$FAKE_HOME" cargo test models_download -- --ignored --nocapture
+HOME="$FAKE_HOME" USERPROFILE="$FAKE_HOME" cargo test onnx_embedder -- --ignored --nocapture
 
-# End-to-end index against a downloaded model
-cargo test --test index_cli -- --ignored --nocapture
-
-# Full manual E2E: index this repo's src/ twice (second run reuses embeddings)
+# Full manual E2E: index this repo's src/ twice (second run reuses embeddings).
+# The ignored index_cli tests create their own per-test HOME directories, so this
+# direct command pair is the canonical downloaded-model CLI check.
 HOME="$FAKE_HOME" USERPROFILE="$FAKE_HOME" ./target/release/vektor index src/
 HOME="$FAKE_HOME" USERPROFILE="$FAKE_HOME" ./target/release/vektor index src/
 ```
