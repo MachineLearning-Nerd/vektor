@@ -13,7 +13,7 @@ pub struct Config {
     pub server: ServerConfig,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Clone, Serialize, Deserialize)]
 #[serde(default)]
 pub struct EmbeddingConfig {
     pub backend: String,
@@ -25,6 +25,24 @@ pub struct EmbeddingConfig {
     pub onnx_model: String,
     pub fallback_to_onnx: bool,
     pub max_requests_per_minute: u32,
+}
+
+impl std::fmt::Debug for EmbeddingConfig {
+    /// Manual `Debug` redacts `openai_api_key` so the secret never leaks via
+    /// `tracing::debug!(?config, ...)` (the config-loaded log in `cli::run`).
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("EmbeddingConfig")
+            .field("backend", &self.backend)
+            .field("openai_api_key", &"<redacted>")
+            .field("openai_base_url", &self.openai_base_url)
+            .field("openai_model", &self.openai_model)
+            .field("ollama_url", &self.ollama_url)
+            .field("ollama_model", &self.ollama_model)
+            .field("onnx_model", &self.onnx_model)
+            .field("fallback_to_onnx", &self.fallback_to_onnx)
+            .field("max_requests_per_minute", &self.max_requests_per_minute)
+            .finish()
+    }
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -137,6 +155,20 @@ fn config_error_to_vektor(error: config::ConfigError) -> VektorError {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn embedding_config_debug_redacts_api_key() {
+        let cfg = EmbeddingConfig {
+            openai_api_key: "sk-super-secret-12345".into(),
+            ..Default::default()
+        };
+        let rendered = format!("{cfg:?}");
+        assert!(
+            !rendered.contains("sk-super-secret-12345"),
+            "openai_api_key leaked in Debug output: {rendered}"
+        );
+        assert!(rendered.contains("<redacted>"));
+    }
 
     #[test]
     fn test_default_config() {
