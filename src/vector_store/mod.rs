@@ -559,6 +559,213 @@ impl VectorStore {
             reused: plan.reused,
         })
     }
+
+    // ---------------------------------------------------------------------------
+    // 3.8 — Semantic vector search
+    // ---------------------------------------------------------------------------
+
+    /// Search the `chunks` table for the nearest neighbours to `query_vec`.
+    ///
+    /// ## Parameters
+    /// - `query_vec`: The query embedding. Must have exactly `self.dim` elements;
+    ///   a dimension mismatch returns a [`VektorError::Storage`] immediately,
+    ///   without touching LanceDB.
+    /// - `top_k`: Maximum number of results to return. `top_k == 0` returns an
+    ///   empty `Vec` without issuing any query to LanceDB.
+    /// - `filter`: An optional SQL-like predicate string (DataFusion syntax) to
+    ///   narrow the search at the LanceDB layer — e.g. `"language = 'rust'"` or
+    ///   `"rel_path = 'src/main.rs'"`. Applied as a *pre-filter* so only
+    ///   matching rows participate in the ANN scan. The caller is responsible
+    ///   for predicate validity and any escaping needed for literal values (use
+    ///   [`escape_sql_string_literal`] for single-quoted string constants).
+    ///
+    /// ## Score semantics
+    /// [`SearchResult::score`] is the raw L2 distance from LanceDB's `_distance`
+    /// column (auto-projected for every vector query). **Lower is more similar**;
+    /// 0.0 is a perfect match. Results are ordered nearest-first (ascending
+    /// distance). Phase 4 owns normalisation, RRF fusion, and any
+    /// score-inversion needed for display.
+    ///
+    /// ## Dead-code allowance
+    /// This method has no non-test caller until Phase 4 hybrid search (4.5).
+    /// `#[allow(dead_code)]` suppresses the lint until then.
+    #[allow(dead_code)]
+    pub(crate) async fn search(
+        &self,
+        query_vec: &[f32],
+        top_k: usize,
+        filter: Option<&str>,
+    ) -> Result<Vec<SearchResult>> {
+        // --- Validate dimension before any LanceDB call ---
+        if query_vec.len() != self.meta.embedding_dim {
+            return Err(VektorError::Storage(format!(
+                "query vector has {} dimensions but store expects {}; \
+                 re-embed with the correct model or re-open with the right dim",
+                query_vec.len(),
+                self.meta.embedding_dim,
+            )));
+        }
+
+        // --- Short-circuit for top_k == 0 ---
+        if top_k == 0 {
+            return Ok(vec![]);
+        }
+
+        let table = self.chunks_table().await?;
+
+        // Build the vector query: nearest_to returns VectorQuery (implements QueryBase).
+        // `_distance` is auto-projected for all vector queries (disable_scoring_autoprojection
+        // defaults to false), so we do not need to select it explicitly.
+        let mut vq = table
+            .query()
+            .nearest_to(query_vec)
+            .map_err(|e| VektorError::Storage(format!("nearest_to failed: {e}")))?
+            .limit(top_k);
+
+        // Apply the optional caller-supplied filter at the LanceDB query layer.
+        if let Some(pred) = filter {
+            vq = vq.only_if(pred);
+        }
+
+        let stream = vq
+            .execute()
+            .await
+            .map_err(|e| VektorError::Storage(format!("vector search execute failed: {e}")))?;
+
+        let batches: Vec<RecordBatch> = stream.try_collect().await.map_err(|e| {
+            VektorError::Storage(format!("vector search stream collect failed: {e}"))
+        })?;
+
+        // --- Extract columns and build SearchResult rows ---
+        let mut results: Vec<SearchResult> = Vec::new();
+        for batch in &batches {
+            let num_rows = batch.num_rows();
+
+            // Helper macro: extract a named column, downcast to the expected type.
+            // Returns a VektorError::Storage on missing column or type mismatch.
+            macro_rules! col_str {
+                ($name:expr) => {{
+                    batch
+                        .column_by_name($name)
+                        .ok_or_else(|| {
+                            VektorError::Storage(format!(
+                                "search result missing column '{}'",
+                                $name
+                            ))
+                        })?
+                        .as_any()
+                        .downcast_ref::<StringArray>()
+                        .ok_or_else(|| {
+                            VektorError::Storage(format!(
+                                "column '{}' is not a Utf8 StringArray",
+                                $name
+                            ))
+                        })?
+                }};
+            }
+            macro_rules! col_u32 {
+                ($name:expr) => {{
+                    batch
+                        .column_by_name($name)
+                        .ok_or_else(|| {
+                            VektorError::Storage(format!(
+                                "search result missing column '{}'",
+                                $name
+                            ))
+                        })?
+                        .as_any()
+                        .downcast_ref::<UInt32Array>()
+                        .ok_or_else(|| {
+                            VektorError::Storage(format!("column '{}' is not a UInt32Array", $name))
+                        })?
+                }};
+            }
+            macro_rules! col_i64 {
+                ($name:expr) => {{
+                    batch
+                        .column_by_name($name)
+                        .ok_or_else(|| {
+                            VektorError::Storage(format!(
+                                "search result missing column '{}'",
+                                $name
+                            ))
+                        })?
+                        .as_any()
+                        .downcast_ref::<Int64Array>()
+                        .ok_or_else(|| {
+                            VektorError::Storage(format!("column '{}' is not an Int64Array", $name))
+                        })?
+                }};
+            }
+            macro_rules! col_f32 {
+                ($name:expr) => {{
+                    batch
+                        .column_by_name($name)
+                        .ok_or_else(|| {
+                            VektorError::Storage(format!(
+                                "search result missing column '{}'",
+                                $name
+                            ))
+                        })?
+                        .as_any()
+                        .downcast_ref::<Float32Array>()
+                        .ok_or_else(|| {
+                            VektorError::Storage(format!(
+                                "column '{}' is not a Float32Array",
+                                $name
+                            ))
+                        })?
+                }};
+            }
+
+            let distances = col_f32!("_distance");
+            let ids = col_str!("id");
+            let content_hashes = col_str!("content_hash");
+            let rel_paths = col_str!("rel_path");
+            let start_lines = col_u32!("start_line");
+            let end_lines = col_u32!("end_line");
+            let symbol_names = col_str!("symbol_name");
+            let symbol_types = col_str!("symbol_type");
+            let languages = col_str!("language");
+            let contents = col_str!("content");
+            let last_modifieds = col_i64!("last_modified");
+
+            for row in 0..num_rows {
+                results.push(SearchResult {
+                    score: distances.value(row),
+                    id: ids.value(row).to_string(),
+                    content_hash: content_hashes.value(row).to_string(),
+                    rel_path: rel_paths.value(row).to_string(),
+                    start_line: start_lines.value(row),
+                    end_line: end_lines.value(row),
+                    symbol_name: if symbol_names.is_null(row) {
+                        None
+                    } else {
+                        Some(symbol_names.value(row).to_string())
+                    },
+                    symbol_type: if symbol_types.is_null(row) {
+                        None
+                    } else {
+                        Some(symbol_types.value(row).to_string())
+                    },
+                    language: languages.value(row).to_string(),
+                    content: contents.value(row).to_string(),
+                    last_modified: last_modifieds.value(row),
+                });
+            }
+        }
+
+        // LanceDB returns rows nearest-first from ANN/flat search.
+        // Sort by score ascending (nearest first) to be explicit and robust
+        // even when results span multiple batches.
+        results.sort_by(|a, b| {
+            a.score
+                .partial_cmp(&b.score)
+                .unwrap_or(std::cmp::Ordering::Equal)
+        });
+
+        Ok(results)
+    }
 }
 
 // ---------------------------------------------------------------------------
@@ -713,6 +920,42 @@ pub(crate) async fn plan_reindex(
             embedded: embedded_count,
         },
     ))
+}
+
+// ---------------------------------------------------------------------------
+// 3.8 — SearchResult type
+// ---------------------------------------------------------------------------
+
+/// A single result row returned by [`VectorStore::search`].
+///
+/// Every metadata field from the `chunks` table schema is present except the
+/// raw `vector` column (Phase 4 hybrid fusion and display never need to
+/// re-inspect the stored embedding; they operate on `score` + text metadata).
+///
+/// ## `score` semantics
+/// `score` is the raw L2 (Euclidean squared) distance that LanceDB stores in
+/// the auto-projected `_distance` column for an ANN/flat vector search. This
+/// means **lower is more similar** — a perfect match has distance 0.0. Results
+/// are returned nearest-first (ascending score). Phase 4 owns normalization,
+/// RRF fusion, and any score-inversion needed for display.
+///
+/// `#[allow(dead_code)]`: consumed by Phase 4 hybrid search (4.5);
+/// allow until then.
+#[allow(dead_code)]
+#[derive(Debug, Clone, PartialEq)]
+pub struct SearchResult {
+    /// Raw L2 distance from the query vector (lower = more similar).
+    pub score: f32,
+    pub id: String,
+    pub content_hash: String,
+    pub rel_path: String,
+    pub start_line: u32,
+    pub end_line: u32,
+    pub symbol_name: Option<String>,
+    pub symbol_type: Option<String>,
+    pub language: String,
+    pub content: String,
+    pub last_modified: i64,
 }
 
 /// Arrow schema for the `chunks` table.
@@ -1885,5 +2128,391 @@ mod tests {
             total,
             "all rows across both batches are inserted"
         );
+    }
+
+    // -----------------------------------------------------------------------
+    // 3.8 — search tests
+    // -----------------------------------------------------------------------
+    //
+    // Vector design: we use small dim=4 stores so vectors are easy to reason
+    // about.  We plant rows with KNOWN vectors and query with a vector whose
+    // L2 distance to each row is predictable.
+    //
+    // L2 distance (squared, what LanceDB returns by default):
+    //   dist([q1..q4], [r1..r4]) = sum((qi - ri)^2)
+    //
+    // We use unit basis vectors so distances are integers and trivially orderable.
+
+    const SDIM: usize = 4; // small dim for search tests
+    const SMODEL: &str = "test-model-4d";
+
+    /// Build a store with SDIM embedding dimension.
+    async fn search_store(project: &Path, data_dir: &Path) -> VectorStore {
+        VectorStore::new(project, &config_with_data_dir(data_dir), SDIM, SMODEL)
+            .await
+            .expect("create search store")
+    }
+
+    /// Make a `ChunkRow` with an explicit language, symbol_name/type, and vector.
+    fn search_row(
+        id: &str,
+        rel_path: &str,
+        language: &str,
+        vector: Vec<f32>,
+        symbol_name: Option<&str>,
+        symbol_type: Option<&str>,
+    ) -> ChunkRow {
+        ChunkRow {
+            id: id.to_string(),
+            content_hash: format!("ch-{id}"),
+            vector,
+            rel_path: rel_path.to_string(),
+            start_line: 1,
+            end_line: 5,
+            symbol_name: symbol_name.map(|s| s.to_string()),
+            symbol_type: symbol_type.map(|s| s.to_string()),
+            language: language.to_string(),
+            content: format!("content of {id}"),
+            last_modified: 1_700_000_000,
+        }
+    }
+
+    // --- AC: top_k == 0 → empty list, no query ---
+
+    #[tokio::test]
+    async fn vector_store_search_top_k_zero_returns_empty() {
+        let project = tempfile::tempdir().expect("project");
+        let data_dir = tempfile::tempdir().expect("data dir");
+        let store = search_store(project.path(), data_dir.path()).await;
+
+        // Seed some rows so the table is non-empty — search must still be a no-op.
+        store
+            .insert_chunks(&[search_row(
+                "r1",
+                "src/a.rs",
+                "rust",
+                vec![1.0, 0.0, 0.0, 0.0],
+                None,
+                None,
+            )])
+            .await
+            .expect("seed");
+
+        let results = store
+            .search(&[1.0, 0.0, 0.0, 0.0], 0, None)
+            .await
+            .expect("search top_k=0 must succeed");
+
+        assert!(results.is_empty(), "top_k=0 must return empty vec");
+    }
+
+    // --- AC: dimension mismatch → clear error, no LanceDB call ---
+
+    #[tokio::test]
+    async fn vector_store_search_dim_mismatch_returns_error() {
+        let project = tempfile::tempdir().expect("project");
+        let data_dir = tempfile::tempdir().expect("data dir");
+        let store = search_store(project.path(), data_dir.path()).await;
+
+        // SDIM == 4, query with 3 elements — must fail fast with a clear message.
+        let err = store
+            .search(&[1.0, 0.0, 0.0], 5, None)
+            .await
+            .expect_err("dim mismatch must error");
+
+        assert!(
+            matches!(err, VektorError::Storage(_)),
+            "expected Storage error, got: {err:?}"
+        );
+        let msg = err.to_string();
+        assert!(
+            msg.contains('3') && msg.contains('4'),
+            "error must mention actual ({}) and expected ({}) dims; got: {msg}",
+            3,
+            SDIM
+        );
+    }
+
+    // --- AC: ranking — nearest first, all metadata correct ---
+
+    #[tokio::test]
+    async fn vector_store_search_ranking_nearest_first() {
+        // Seed 3 rows with axis-aligned vectors of known L2 distances to the
+        // query [1,0,0,0]:
+        //   row "near":  [1,0,0,0]  → dist = 0  (exact match)
+        //   row "mid":   [0,1,0,0]  → dist = 2  (two 1^2 = 2)
+        //   row "far":   [0,0,0,1]  → dist = 2  ... actually same — let's use
+        //
+        // Use deliberate distances:
+        //   query:      [1, 0, 0, 0]
+        //   "near":     [1, 0, 0, 0]  → L2 = 0
+        //   "mid":      [0, 1, 0, 0]  → L2 = 1^2 + 1^2 = 2
+        //   "far":      [0, 0, 1, 0]  → same as mid... use a farther one
+        //   "far":      [-1, 0, 0, 0] → L2 = (1-(-1))^2 = 4
+        let project = tempfile::tempdir().expect("project");
+        let data_dir = tempfile::tempdir().expect("data dir");
+        let store = search_store(project.path(), data_dir.path()).await;
+
+        store
+            .insert_chunks(&[
+                search_row(
+                    "near",
+                    "src/near.rs",
+                    "rust",
+                    vec![1.0, 0.0, 0.0, 0.0],
+                    Some("fn_near"),
+                    Some("function"),
+                ),
+                search_row(
+                    "mid",
+                    "src/mid.rs",
+                    "rust",
+                    vec![0.0, 1.0, 0.0, 0.0],
+                    None,
+                    None,
+                ),
+                search_row(
+                    "far",
+                    "src/far.rs",
+                    "rust",
+                    vec![-1.0, 0.0, 0.0, 0.0],
+                    None,
+                    None,
+                ),
+            ])
+            .await
+            .expect("seed");
+
+        let query = vec![1.0_f32, 0.0, 0.0, 0.0];
+        let results = store
+            .search(&query, 3, None)
+            .await
+            .expect("search must succeed");
+
+        assert_eq!(results.len(), 3, "top_k=3 returns all 3 rows");
+
+        // Nearest-first ordering.
+        assert_eq!(results[0].id, "near", "nearest row first");
+        assert_eq!(results[1].id, "mid", "mid-distance second");
+        assert_eq!(results[2].id, "far", "farthest row last");
+
+        // Scores are non-negative L2 distances, ascending.
+        assert!(
+            results[0].score <= results[1].score,
+            "scores non-decreasing: {} <= {}",
+            results[0].score,
+            results[1].score
+        );
+        assert!(
+            results[1].score <= results[2].score,
+            "scores non-decreasing: {} <= {}",
+            results[1].score,
+            results[2].score
+        );
+
+        // Near row distance should be ~0.
+        assert!(
+            results[0].score < 1e-5,
+            "exact match has distance ≈ 0; got {}",
+            results[0].score
+        );
+    }
+
+    // --- AC: all metadata fields extracted correctly ---
+
+    #[tokio::test]
+    async fn vector_store_search_all_metadata_fields_correct() {
+        let project = tempfile::tempdir().expect("project");
+        let data_dir = tempfile::tempdir().expect("data dir");
+        let store = search_store(project.path(), data_dir.path()).await;
+
+        // One row with all fields populated.
+        let mut row = search_row(
+            "meta-row",
+            "src/lib.rs",
+            "python",
+            vec![1.0, 0.0, 0.0, 0.0],
+            Some("my_func"),
+            Some("function"),
+        );
+        row.start_line = 10;
+        row.end_line = 20;
+        row.last_modified = 1_234_567_890;
+        row.content = "def my_func(): pass".to_string();
+        row.content_hash = "explicit-hash".to_string();
+
+        store.insert_chunks(&[row]).await.expect("seed");
+
+        let results = store
+            .search(&[1.0, 0.0, 0.0, 0.0], 1, None)
+            .await
+            .expect("search");
+
+        assert_eq!(results.len(), 1);
+        let r = &results[0];
+
+        assert_eq!(r.id, "meta-row");
+        assert_eq!(r.content_hash, "explicit-hash");
+        assert_eq!(r.rel_path, "src/lib.rs");
+        assert_eq!(r.start_line, 10);
+        assert_eq!(r.end_line, 20);
+        assert_eq!(r.symbol_name, Some("my_func".to_string()));
+        assert_eq!(r.symbol_type, Some("function".to_string()));
+        assert_eq!(r.language, "python");
+        assert_eq!(r.content, "def my_func(): pass");
+        assert_eq!(r.last_modified, 1_234_567_890);
+        assert!(r.score >= 0.0, "score must be non-negative");
+    }
+
+    // --- AC: null symbol_name / symbol_type round-trip correctly ---
+
+    #[tokio::test]
+    async fn vector_store_search_null_symbol_fields_round_trip() {
+        let project = tempfile::tempdir().expect("project");
+        let data_dir = tempfile::tempdir().expect("data dir");
+        let store = search_store(project.path(), data_dir.path()).await;
+
+        store
+            .insert_chunks(&[search_row(
+                "no-sym",
+                "src/a.rs",
+                "rust",
+                vec![1.0, 0.0, 0.0, 0.0],
+                None, // symbol_name: null
+                None, // symbol_type: null
+            )])
+            .await
+            .expect("seed");
+
+        let results = store
+            .search(&[1.0, 0.0, 0.0, 0.0], 1, None)
+            .await
+            .expect("search");
+
+        assert_eq!(results.len(), 1);
+        assert_eq!(results[0].symbol_name, None, "null symbol_name preserved");
+        assert_eq!(results[0].symbol_type, None, "null symbol_type preserved");
+    }
+
+    // --- AC: top_k limits results ---
+
+    #[tokio::test]
+    async fn vector_store_search_top_k_limits_results() {
+        let project = tempfile::tempdir().expect("project");
+        let data_dir = tempfile::tempdir().expect("data dir");
+        let store = search_store(project.path(), data_dir.path()).await;
+
+        // Seed 5 rows.
+        let rows: Vec<ChunkRow> = (0..5_u32)
+            .map(|i| {
+                // Spread vectors along first axis so distances are distinct.
+                let v = vec![i as f32, 0.0, 0.0, 0.0];
+                search_row(
+                    &format!("r{i}"),
+                    &format!("src/{i}.rs"),
+                    "rust",
+                    v,
+                    None,
+                    None,
+                )
+            })
+            .collect();
+        store.insert_chunks(&rows).await.expect("seed");
+
+        let results = store
+            .search(&[0.0, 0.0, 0.0, 0.0], 3, None)
+            .await
+            .expect("search");
+
+        assert_eq!(results.len(), 3, "top_k=3 caps at 3 results");
+    }
+
+    // --- AC: filter narrows results at the LanceDB query layer ---
+
+    #[tokio::test]
+    async fn vector_store_search_filter_by_language() {
+        // Seed rust + python rows with same direction but different languages.
+        // A filter for "language = 'rust'" must return only rust rows.
+        let project = tempfile::tempdir().expect("project");
+        let data_dir = tempfile::tempdir().expect("data dir");
+        let store = search_store(project.path(), data_dir.path()).await;
+
+        store
+            .insert_chunks(&[
+                search_row(
+                    "rs1",
+                    "src/a.rs",
+                    "rust",
+                    vec![1.0, 0.0, 0.0, 0.0],
+                    None,
+                    None,
+                ),
+                search_row(
+                    "py1",
+                    "src/b.py",
+                    "python",
+                    vec![1.0, 0.0, 0.0, 0.0],
+                    None,
+                    None,
+                ),
+                search_row(
+                    "rs2",
+                    "src/c.rs",
+                    "rust",
+                    vec![0.0, 1.0, 0.0, 0.0],
+                    None,
+                    None,
+                ),
+            ])
+            .await
+            .expect("seed");
+
+        let results = store
+            .search(&[1.0, 0.0, 0.0, 0.0], 10, Some("language = 'rust'"))
+            .await
+            .expect("search with filter");
+
+        assert_eq!(results.len(), 2, "filter keeps only rust rows");
+        for r in &results {
+            assert_eq!(r.language, "rust", "all results are rust");
+        }
+    }
+
+    #[tokio::test]
+    async fn vector_store_search_filter_by_rel_path() {
+        let project = tempfile::tempdir().expect("project");
+        let data_dir = tempfile::tempdir().expect("data dir");
+        let store = search_store(project.path(), data_dir.path()).await;
+
+        store
+            .insert_chunks(&[
+                search_row(
+                    "a1",
+                    "src/a.rs",
+                    "rust",
+                    vec![1.0, 0.0, 0.0, 0.0],
+                    None,
+                    None,
+                ),
+                search_row(
+                    "b1",
+                    "src/b.rs",
+                    "rust",
+                    vec![1.0, 0.0, 0.0, 0.0],
+                    None,
+                    None,
+                ),
+            ])
+            .await
+            .expect("seed");
+
+        let predicate = format!("rel_path = '{}'", escape_sql_string_literal("src/a.rs"));
+        let results = store
+            .search(&[1.0, 0.0, 0.0, 0.0], 10, Some(&predicate))
+            .await
+            .expect("search with path filter");
+
+        assert_eq!(results.len(), 1, "filter keeps only src/a.rs");
+        assert_eq!(results[0].rel_path, "src/a.rs");
     }
 }
