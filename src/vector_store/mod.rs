@@ -17,18 +17,22 @@
 //! errors. Do not add a direct arrow dependency. See PRD §11.
 
 use std::{
+    collections::HashMap,
     fs,
     path::{Path, PathBuf},
     sync::Arc,
 };
 
 use arrow_array::{
-    FixedSizeListArray, Int64Array, RecordBatch, StringArray, UInt32Array, types::Float32Type,
+    Array, FixedSizeListArray, Float32Array, Int64Array, RecordBatch, StringArray, UInt32Array,
+    types::Float32Type,
 };
+use futures::TryStreamExt;
 use lancedb::{
     Connection,
     arrow::arrow_schema::{DataType, Field, Schema, SchemaRef},
     connect,
+    query::{ExecutableQuery, QueryBase, Select},
 };
 use serde::{Deserialize, Serialize};
 
@@ -355,6 +359,127 @@ impl VectorStore {
         Ok(())
     }
 
+    /// Load the existing embeddings for ONE file, keyed by `content_hash`.
+    ///
+    /// This is the read half of read-before-delete re-indexing (PRD §4.5): 3.7b
+    /// calls it *before* [`VectorStore::delete_by_file`] so unchanged chunks can
+    /// reuse their stored vector instead of being re-embedded. The cache key is
+    /// `content_hash` because content reuse is the contract — identical content
+    /// hashes to the same value and must embed to the same vector.
+    ///
+    /// The query is filtered by EXACT `rel_path` (via [`escape_sql_string_literal`],
+    /// same predicate as [`VectorStore::delete_by_file`]) so it touches only this
+    /// file's rows, never a full-table scan. Only the `content_hash` and `vector`
+    /// columns are selected — the columnar store reads exactly those two columns.
+    ///
+    /// Behavior:
+    /// - A missing file (no matching rows) returns an EMPTY map, not an error.
+    /// - If the same `content_hash` appears on more than one row of this file
+    ///   (duplicate co-located chunks with identical content), ONE vector is kept
+    ///   (first wins) and the collision is logged at `debug`. Identical content ⇒
+    ///   identical embedding, so the choice is immaterial.
+    ///
+    /// SIDE-EFFECT FREE: takes `&self` and only reads — it never deletes or
+    /// mutates rows or metadata, which is what makes it safe to call *before*
+    /// `delete_by_file`. This is also the result-`RecordBatch` column-extraction
+    /// pattern that 3.8 (search) reuses to read columns back out.
+    ///
+    /// `#[allow(dead_code)]`: used by 3.7b reindex planning; allow until then.
+    #[allow(dead_code)]
+    pub(crate) async fn existing_embeddings_by_content_hash(
+        &self,
+        rel_path: &str,
+    ) -> Result<HashMap<String, Vec<f32>>> {
+        let predicate = format!("rel_path = '{}'", escape_sql_string_literal(rel_path));
+
+        let table = self.chunks_table().await?;
+        let stream = table
+            .query()
+            .only_if(predicate)
+            // Read only the two columns the cache needs (content reuse key +
+            // the vector to reuse). Selecting fewer columns is the documented
+            // best practice for LanceDB's columnar reads.
+            .select(Select::Columns(vec![
+                "content_hash".to_string(),
+                "vector".to_string(),
+            ]))
+            .execute()
+            .await
+            .map_err(|e| VektorError::Storage(e.to_string()))?;
+
+        // Collect the result stream into in-memory batches. `SendableRecordBatchStream`
+        // is `Stream<Item = Result<RecordBatch>>`, so `try_collect` yields the
+        // batches or short-circuits on the first storage error.
+        let batches: Vec<RecordBatch> = stream
+            .try_collect()
+            .await
+            .map_err(|e| VektorError::Storage(e.to_string()))?;
+
+        let mut out: HashMap<String, Vec<f32>> = HashMap::new();
+        for batch in &batches {
+            // Extract the two selected columns by NAME (not position): `select`
+            // returns columns in the requested order, but reading by name is
+            // robust to that and self-documenting.
+            let hashes = batch
+                .column_by_name("content_hash")
+                .ok_or_else(|| {
+                    VektorError::Storage("query result missing content_hash column".into())
+                })?
+                .as_any()
+                .downcast_ref::<StringArray>()
+                .ok_or_else(|| {
+                    VektorError::Storage("content_hash column is not a Utf8 StringArray".into())
+                })?;
+
+            let vectors = batch
+                .column_by_name("vector")
+                .ok_or_else(|| VektorError::Storage("query result missing vector column".into()))?
+                .as_any()
+                .downcast_ref::<FixedSizeListArray>()
+                .ok_or_else(|| {
+                    VektorError::Storage("vector column is not a FixedSizeListArray".into())
+                })?;
+
+            for row in 0..batch.num_rows() {
+                if hashes.is_null(row) {
+                    return Err(VektorError::Storage(
+                        "unexpected null content_hash in chunks table".into(),
+                    ));
+                }
+                let content_hash = hashes.value(row).to_string();
+
+                // Reconstruct the per-row `Vec<f32>` from the FixedSizeList: each
+                // list cell is itself an array; downcast that inner array to a
+                // Float32Array and copy its values out.
+                let cell = vectors.value(row);
+                let floats = cell
+                    .as_any()
+                    .downcast_ref::<Float32Array>()
+                    .ok_or_else(|| {
+                        VektorError::Storage("vector list items are not Float32".into())
+                    })?;
+                let vector: Vec<f32> = floats.values().to_vec();
+
+                // First write wins for duplicate content hashes within this file;
+                // identical content ⇒ identical embedding, so either is fine.
+                match out.entry(content_hash) {
+                    std::collections::hash_map::Entry::Vacant(e) => {
+                        e.insert(vector);
+                    }
+                    std::collections::hash_map::Entry::Occupied(e) => {
+                        tracing::debug!(
+                            rel_path,
+                            content_hash = e.key().as_str(),
+                            "duplicate content_hash within file; keeping first vector"
+                        );
+                    }
+                }
+            }
+        }
+
+        Ok(out)
+    }
+
     /// Delete every chunk row whose `rel_path` exactly equals `rel_path`.
     ///
     /// Matching is EXACT (`rel_path = '<escaped>'`), never prefix/glob/substring,
@@ -471,6 +596,27 @@ mod tests {
     async fn count_all(store: &VectorStore) -> usize {
         let table = store.chunks_table().await.expect("open table");
         table.count_rows(None).await.expect("count rows")
+    }
+
+    /// Build a `ChunkRow` with an explicit `content_hash` and a distinct vector
+    /// so cache-read tests can assert exactly which hash maps to which vector.
+    /// The vector is `[seed, seed+1, ...]` (DIM-length) — distinct per `seed` and
+    /// not all-equal, so a "values preserved" assertion is meaningful.
+    fn row_with(id: &str, rel_path: &str, content_hash: &str, seed: f32) -> ChunkRow {
+        let vector: Vec<f32> = (0..DIM).map(|i| seed + i as f32).collect();
+        ChunkRow {
+            id: id.to_string(),
+            content_hash: content_hash.to_string(),
+            vector,
+            rel_path: rel_path.to_string(),
+            start_line: 1,
+            end_line: 10,
+            symbol_name: Some("fn_name".to_string()),
+            symbol_type: Some("function".to_string()),
+            language: "rust".to_string(),
+            content: format!("content of {id}"),
+            last_modified: 1_700_000_000,
+        }
     }
 
     #[test]
@@ -654,6 +800,181 @@ mod tests {
             reopened.meta().chunks_deleted_since,
             2,
             "churn persisted across reopen"
+        );
+    }
+
+    #[tokio::test]
+    async fn existing_embeddings_by_content_hash_filters_by_rel_path() {
+        // Two files SHARE a content_hash but have DIFFERENT vectors. Querying one
+        // file must return only that file's vector for the shared hash — proving
+        // the rel_path filter is enforced (no cross-file leakage).
+        let project = tempfile::tempdir().expect("project");
+        let data_dir = tempfile::tempdir().expect("data dir");
+        let config = config_with_data_dir(data_dir.path());
+
+        let store = VectorStore::new(project.path(), &config, DIM, MODEL)
+            .await
+            .expect("create store");
+
+        let shared = "shared-hash";
+        store
+            .insert_chunks(&[
+                // file A: the shared hash plus a unique one.
+                row_with("a1", "src/a.rs", shared, 10.0),
+                row_with("a2", "src/a.rs", "only-in-a", 20.0),
+                // file B: same shared hash, but a DIFFERENT vector (seed 99).
+                row_with("b1", "src/b.rs", shared, 99.0),
+            ])
+            .await
+            .expect("seed rows");
+
+        let map = store
+            .existing_embeddings_by_content_hash("src/a.rs")
+            .await
+            .expect("read cache");
+
+        assert_eq!(map.len(), 2, "only file A's two hashes are returned");
+        assert!(map.contains_key("only-in-a"));
+
+        // The shared hash must resolve to file A's vector (seed 10), NOT B's (99).
+        let expected_a: Vec<f32> = (0..DIM).map(|i| 10.0 + i as f32).collect();
+        assert_eq!(
+            map.get(shared),
+            Some(&expected_a),
+            "shared hash resolves to THIS file's vector, not the other file's"
+        );
+    }
+
+    #[tokio::test]
+    async fn existing_embeddings_by_content_hash_preserves_dimension_and_values() {
+        let project = tempfile::tempdir().expect("project");
+        let data_dir = tempfile::tempdir().expect("data dir");
+        let config = config_with_data_dir(data_dir.path());
+
+        let store = VectorStore::new(project.path(), &config, DIM, MODEL)
+            .await
+            .expect("create store");
+
+        store
+            .insert_chunks(&[row_with("a1", "src/a.rs", "h-a1", 3.5)])
+            .await
+            .expect("seed rows");
+
+        let map = store
+            .existing_embeddings_by_content_hash("src/a.rs")
+            .await
+            .expect("read cache");
+
+        let v = map.get("h-a1").expect("hash present");
+        assert_eq!(v.len(), DIM, "full dimension preserved");
+        let expected: Vec<f32> = (0..DIM).map(|i| 3.5 + i as f32).collect();
+        assert_eq!(v, &expected, "all values preserved exactly");
+    }
+
+    #[tokio::test]
+    async fn existing_embeddings_by_content_hash_missing_file_is_empty_map() {
+        let project = tempfile::tempdir().expect("project");
+        let data_dir = tempfile::tempdir().expect("data dir");
+        let config = config_with_data_dir(data_dir.path());
+
+        let store = VectorStore::new(project.path(), &config, DIM, MODEL)
+            .await
+            .expect("create store");
+
+        // Seed an unrelated file so the table is non-empty.
+        store
+            .insert_chunks(&[row_with("b1", "src/b.rs", "h-b1", 1.0)])
+            .await
+            .expect("seed rows");
+
+        let map = store
+            .existing_embeddings_by_content_hash("does/not/exist.rs")
+            .await
+            .expect("missing file is not an error");
+
+        assert!(map.is_empty(), "no rows for a missing file => empty map");
+    }
+
+    #[tokio::test]
+    async fn existing_embeddings_by_content_hash_dedupes_within_one_file() {
+        // The same content_hash appears twice within ONE file (identical content
+        // co-located). Exactly one vector is kept (first wins).
+        let project = tempfile::tempdir().expect("project");
+        let data_dir = tempfile::tempdir().expect("data dir");
+        let config = config_with_data_dir(data_dir.path());
+
+        let store = VectorStore::new(project.path(), &config, DIM, MODEL)
+            .await
+            .expect("create store");
+
+        let dup = "dup-hash";
+        store
+            .insert_chunks(&[
+                row_with("a1", "src/a.rs", dup, 1.0),
+                row_with("a2", "src/a.rs", dup, 2.0),
+                row_with("a3", "src/a.rs", "unique", 7.0),
+            ])
+            .await
+            .expect("seed rows");
+
+        let map = store
+            .existing_embeddings_by_content_hash("src/a.rs")
+            .await
+            .expect("read cache");
+
+        assert_eq!(map.len(), 2, "duplicate hash collapses to one entry");
+        let dup_vec = map.get(dup).expect("dup hash present");
+        assert_eq!(dup_vec.len(), DIM, "kept vector has full dimension");
+        // Either seeded vector is acceptable per the contract (identical content
+        // ⇒ identical embedding); assert it is one of the two we wrote.
+        let opt1: Vec<f32> = (0..DIM).map(|i| 1.0 + i as f32).collect();
+        let opt2: Vec<f32> = (0..DIM).map(|i| 2.0 + i as f32).collect();
+        assert!(
+            *dup_vec == opt1 || *dup_vec == opt2,
+            "kept vector is one of the seeded duplicates"
+        );
+    }
+
+    #[tokio::test]
+    async fn existing_embeddings_by_content_hash_is_side_effect_free() {
+        // Reading the cache must NOT delete or mutate rows: the data is still
+        // present immediately afterward (read-before-delete invariant), and the
+        // deletion churn stat is untouched.
+        let project = tempfile::tempdir().expect("project");
+        let data_dir = tempfile::tempdir().expect("data dir");
+        let config = config_with_data_dir(data_dir.path());
+
+        let store = VectorStore::new(project.path(), &config, DIM, MODEL)
+            .await
+            .expect("create store");
+
+        store
+            .insert_chunks(&[
+                row_with("a1", "src/a.rs", "h-a1", 1.0),
+                row_with("a2", "src/a.rs", "h-a2", 2.0),
+            ])
+            .await
+            .expect("seed rows");
+
+        let before_churn = store.meta().chunks_deleted_since;
+
+        let map = store
+            .existing_embeddings_by_content_hash("src/a.rs")
+            .await
+            .expect("read cache");
+        assert_eq!(map.len(), 2);
+
+        // Rows are still there after the read (the read-before-delete contract).
+        assert_eq!(
+            count_for_path(&store, "src/a.rs").await,
+            2,
+            "read must not delete rows"
+        );
+        assert_eq!(count_all(&store).await, 2, "no rows mutated/removed");
+        assert_eq!(
+            store.meta().chunks_deleted_since,
+            before_churn,
+            "read records no deletion churn"
         );
     }
 

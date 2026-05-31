@@ -46,6 +46,14 @@ lancedb = "0.29"
 # delete tests) and reused by 3.7a/3.7c.
 arrow-array = "58"
 
+# Async stream collection — collecting LanceDB query result `RecordBatch`es
+# (`SendableRecordBatchStream`, which is `Stream<Item = Result<RecordBatch>>`)
+# requires `futures::TryStreamExt::try_collect`. `futures` 0.3 is already in the
+# lockfile transitively (via lancedb); we depend on it directly so the import is
+# a first-class dependency rather than relying on a transitive edge. Used by 3.7a
+# (read-before-delete cache) and reused by 3.8 (search) result collection.
+futures = "0.3"
+
 # Full-Text Search
 tantivy = "0.26"
 

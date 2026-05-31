@@ -7110,6 +7110,7 @@ dependencies = [
  "clap",
  "config",
  "dirs",
+ "futures",
  "ignore",
  "indicatif",
  "lancedb",
