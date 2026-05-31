@@ -518,6 +518,150 @@ impl VectorStore {
     }
 }
 
+// ---------------------------------------------------------------------------
+// 3.7b — Reindex reuse planner
+// ---------------------------------------------------------------------------
+
+/// Counts of reused vs. freshly embedded chunks from [`plan_reindex`].
+///
+/// `reused` + `embedded` always equals the number of input chunks.
+/// 3.7c reads these for logging / metrics.
+#[allow(dead_code)] // called by 3.7c reindex_file; allow until then
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ReindexPlan {
+    /// Chunks whose vector was reused from the existing-embeddings cache.
+    pub reused: usize,
+    /// Chunks that were freshly embedded (cache miss).
+    pub embedded: usize,
+}
+
+/// Reuse-diff planner for a single file's re-indexing pass.
+///
+/// Given the file's current chunks and its existing-embeddings cache (keyed by
+/// `content_hash`, from [`VectorStore::existing_embeddings_by_content_hash`]),
+/// this function decides which chunks can reuse a cached vector and which must
+/// be embedded fresh.  Only the cache-miss chunks are passed to the embedder —
+/// in a **single** `embed_documents` call (document-prefix mode) — so
+/// unchanged functions never trigger redundant ONNX/cloud inference.
+///
+/// ## Returns
+/// `(records, plan)` where `records` is in the **same order** as `chunks`
+/// (deterministic for search-result metadata) and `plan` carries the counts
+/// 3.7c uses for logging.
+///
+/// ## Empty chunk list
+/// Returns `(vec![], ReindexPlan { reused: 0, embedded: 0 })` immediately,
+/// making **no** embedder call.  The delete of old rows is 3.7c's concern.
+///
+/// ## Chunk → ChunkRow mapping
+/// - `start_line` / `end_line`: `usize` → `u32` via checked cast (errors on
+///   truncation — practically impossible, but correct to check).
+/// - `language`: `Option<Language>` → non-null `String`; `Some(l)` →
+///   `l.as_str()`, `None` → `"unknown"`.  The `language` column is non-null.
+/// - `last_modified` is supplied by the caller (3.7c passes the file's mtime).
+///
+/// `#[allow(dead_code)]`: no non-test caller until 3.7c wires `reindex_file`;
+/// allow until then.
+#[allow(dead_code)] // called by 3.7c reindex_file; allow until then
+pub(crate) async fn plan_reindex(
+    chunks: &[crate::chunker::Chunk],
+    cache: &HashMap<String, Vec<f32>>,
+    embedder: &dyn crate::embedder::Embedder,
+    last_modified: i64,
+) -> crate::error::Result<(Vec<ChunkRow>, ReindexPlan)> {
+    if chunks.is_empty() {
+        return Ok((
+            vec![],
+            ReindexPlan {
+                reused: 0,
+                embedded: 0,
+            },
+        ));
+    }
+
+    // Partition: collect indices + content for cache-miss chunks to embed.
+    let mut miss_indices: Vec<usize> = Vec::new();
+    let mut miss_texts: Vec<String> = Vec::new();
+
+    for (i, chunk) in chunks.iter().enumerate() {
+        if !cache.contains_key(&chunk.content_hash) {
+            miss_indices.push(i);
+            miss_texts.push(chunk.content.clone());
+        }
+    }
+
+    // ONE embed_documents call for all cache-miss chunks (document-prefix mode).
+    let fresh_vectors: Vec<Vec<f32>> = if miss_texts.is_empty() {
+        vec![]
+    } else {
+        embedder.embed_documents(&miss_texts).await?
+    };
+
+    let embedded_count = miss_indices.len();
+    let reused_count = chunks.len() - embedded_count;
+
+    // Map freshly-embedded vectors back to their chunk indices.
+    // miss_indices[j] → fresh_vectors[j].
+    let mut fresh_iter = miss_indices.into_iter().zip(fresh_vectors.into_iter());
+    let mut next_fresh: Option<(usize, Vec<f32>)> = fresh_iter.next();
+
+    // Assemble output in original chunk order.
+    let mut records: Vec<ChunkRow> = Vec::with_capacity(chunks.len());
+    for (i, chunk) in chunks.iter().enumerate() {
+        let vector = if let Some(cached) = cache.get(&chunk.content_hash) {
+            // Cache hit: reuse stored vector.
+            cached.clone()
+        } else {
+            // Cache miss: consume the next fresh vector (must be present).
+            let (idx, vec) = next_fresh
+                .take()
+                .expect("fresh_iter must have an entry for every cache-miss index");
+            debug_assert_eq!(idx, i, "fresh_iter and chunk index are in sync");
+            next_fresh = fresh_iter.next();
+            vec
+        };
+
+        let start_line = u32::try_from(chunk.start_line).map_err(|_| {
+            crate::error::VektorError::Storage(format!(
+                "chunk start_line {} overflows u32 (rel_path={})",
+                chunk.start_line, chunk.rel_path
+            ))
+        })?;
+        let end_line = u32::try_from(chunk.end_line).map_err(|_| {
+            crate::error::VektorError::Storage(format!(
+                "chunk end_line {} overflows u32 (rel_path={})",
+                chunk.end_line, chunk.rel_path
+            ))
+        })?;
+        let language = chunk
+            .language
+            .map(|l| l.as_str().to_owned())
+            .unwrap_or_else(|| "unknown".to_owned());
+
+        records.push(ChunkRow {
+            id: chunk.id.clone(),
+            content_hash: chunk.content_hash.clone(),
+            vector,
+            rel_path: chunk.rel_path.clone(),
+            start_line,
+            end_line,
+            symbol_name: chunk.symbol_name.clone(),
+            symbol_type: chunk.symbol_type.clone(),
+            language,
+            content: chunk.content.clone(),
+            last_modified,
+        });
+    }
+
+    Ok((
+        records,
+        ReindexPlan {
+            reused: reused_count,
+            embedded: embedded_count,
+        },
+    ))
+}
+
 /// Arrow schema for the `chunks` table.
 ///
 /// Column order/names/types are the storage contract for tasks 3.7a/3.7c/3.8/3.9.
@@ -1135,5 +1279,325 @@ mod tests {
             Err(e) => e,
         };
         assert!(matches!(err, VektorError::Storage(_)));
+    }
+
+    // -----------------------------------------------------------------------
+    // 3.7b — plan_reindex tests
+    // -----------------------------------------------------------------------
+
+    use crate::chunker::{Chunk, Language};
+    use std::sync::atomic::{AtomicUsize, Ordering};
+
+    /// Fake embedder that counts how many texts it was asked to embed and
+    /// returns deterministic vectors: each element is `(text.len() as f32)`.
+    /// `dim` must be >= 1; the vector is filled with the same scalar.
+    struct CountingEmbedder {
+        dim: usize,
+        call_count: AtomicUsize,
+        text_count: AtomicUsize,
+    }
+
+    impl CountingEmbedder {
+        fn new(dim: usize) -> Self {
+            Self {
+                dim,
+                call_count: AtomicUsize::new(0),
+                text_count: AtomicUsize::new(0),
+            }
+        }
+
+        fn calls(&self) -> usize {
+            self.call_count.load(Ordering::SeqCst)
+        }
+
+        fn texts_embedded(&self) -> usize {
+            self.text_count.load(Ordering::SeqCst)
+        }
+    }
+
+    #[async_trait::async_trait]
+    impl crate::embedder::Embedder for CountingEmbedder {
+        async fn embed(&self, texts: &[String]) -> crate::error::Result<Vec<Vec<f32>>> {
+            self.call_count.fetch_add(1, Ordering::SeqCst);
+            self.text_count.fetch_add(texts.len(), Ordering::SeqCst);
+            // Deterministic vector: each f32 = text.len() as f32.
+            Ok(texts
+                .iter()
+                .map(|t| vec![t.len() as f32; self.dim])
+                .collect())
+        }
+
+        fn dim(&self) -> usize {
+            self.dim
+        }
+
+        fn name(&self) -> &str {
+            "counting-embedder"
+        }
+
+        fn prefix_for_document(&self) -> &str {
+            ""
+        }
+
+        fn prefix_for_query(&self) -> &str {
+            ""
+        }
+    }
+
+    /// Build a minimal `Chunk` for testing the planner.  `language=None` by
+    /// default; pass `Some(Language::Rust)` where language mapping is tested.
+    fn make_chunk(
+        id: &str,
+        content: &str,
+        content_hash: &str,
+        rel_path: &str,
+        start_line: usize,
+        end_line: usize,
+        language: Option<Language>,
+    ) -> Chunk {
+        Chunk {
+            id: id.to_string(),
+            content: content.to_string(),
+            content_hash: content_hash.to_string(),
+            rel_path: rel_path.to_string(),
+            start_line,
+            end_line,
+            symbol_name: None,
+            symbol_type: None,
+            language,
+        }
+    }
+
+    // --- AC: Empty chunk list → no embedder call, empty output ---
+
+    #[tokio::test]
+    async fn reindex_plan_empty_chunks_makes_no_embedder_call() {
+        let embedder = CountingEmbedder::new(4);
+        let cache: HashMap<String, Vec<f32>> = HashMap::new();
+
+        let (records, plan) = plan_reindex(&[], &cache, &embedder, 0)
+            .await
+            .expect("plan_reindex must succeed");
+
+        assert_eq!(records.len(), 0, "no output rows for empty input");
+        assert_eq!(embedder.calls(), 0, "embedder must not be called");
+        assert_eq!(embedder.texts_embedded(), 0);
+        assert_eq!(plan.reused, 0);
+        assert_eq!(plan.embedded, 0);
+    }
+
+    // --- AC: All chunks present in cache → 0 embedder calls, all vectors reused ---
+
+    #[tokio::test]
+    async fn reindex_plan_all_cached_reuses_all_vectors() {
+        let embedder = CountingEmbedder::new(4);
+        let chunks = vec![
+            make_chunk("c1", "fn foo() {}", "hash-foo", "src/a.rs", 1, 5, None),
+            make_chunk("c2", "fn bar() {}", "hash-bar", "src/a.rs", 6, 10, None),
+        ];
+        let cached_foo: Vec<f32> = vec![1.0, 2.0, 3.0, 4.0];
+        let cached_bar: Vec<f32> = vec![5.0, 6.0, 7.0, 8.0];
+        let mut cache: HashMap<String, Vec<f32>> = HashMap::new();
+        cache.insert("hash-foo".to_string(), cached_foo.clone());
+        cache.insert("hash-bar".to_string(), cached_bar.clone());
+
+        let (records, plan) = plan_reindex(&chunks, &cache, &embedder, 1_700_000_000)
+            .await
+            .expect("plan_reindex must succeed");
+
+        assert_eq!(
+            embedder.calls(),
+            0,
+            "no embedder call when all chunks cached"
+        );
+        assert_eq!(embedder.texts_embedded(), 0);
+        assert_eq!(records.len(), 2);
+        assert_eq!(plan.reused, 2);
+        assert_eq!(plan.embedded, 0);
+
+        // Vectors are the cached ones, not freshly generated.
+        assert_eq!(records[0].vector, cached_foo, "chunk 0 uses cached vector");
+        assert_eq!(records[1].vector, cached_bar, "chunk 1 uses cached vector");
+    }
+
+    // --- AC: One chunk's content_hash NOT in cache → embedder called with exactly 1 text ---
+
+    #[tokio::test]
+    async fn reindex_plan_one_miss_embeds_only_changed_chunk() {
+        let embedder = CountingEmbedder::new(4);
+        let chunks = vec![
+            make_chunk("c1", "fn foo() {}", "hash-foo", "src/a.rs", 1, 5, None),
+            make_chunk(
+                "c2",
+                "fn bar_new() {}",
+                "hash-bar-new",
+                "src/a.rs",
+                6,
+                10,
+                None,
+            ),
+            make_chunk("c3", "fn baz() {}", "hash-baz", "src/a.rs", 11, 15, None),
+        ];
+        let cached_foo: Vec<f32> = vec![1.0, 2.0, 3.0, 4.0];
+        let cached_baz: Vec<f32> = vec![9.0, 9.0, 9.0, 9.0];
+        let mut cache: HashMap<String, Vec<f32>> = HashMap::new();
+        cache.insert("hash-foo".to_string(), cached_foo.clone());
+        // hash-bar-new NOT in cache (simulates one-function edit)
+        cache.insert("hash-baz".to_string(), cached_baz.clone());
+
+        let (records, plan) = plan_reindex(&chunks, &cache, &embedder, 1_700_000_000)
+            .await
+            .expect("plan_reindex must succeed");
+
+        // Embedder called once with exactly 1 text — the changed chunk's content.
+        assert_eq!(
+            embedder.calls(),
+            1,
+            "exactly one embed_documents call for one miss"
+        );
+        assert_eq!(
+            embedder.texts_embedded(),
+            1,
+            "exactly 1 text passed to embedder"
+        );
+        assert_eq!(plan.reused, 2);
+        assert_eq!(plan.embedded, 1);
+        assert_eq!(records.len(), 3);
+
+        // Cached chunks keep their vectors.
+        assert_eq!(records[0].vector, cached_foo, "chunk 0 (foo) reuses cache");
+        assert_eq!(records[2].vector, cached_baz, "chunk 2 (baz) reuses cache");
+
+        // The freshly embedded chunk gets the CountingEmbedder's deterministic vector.
+        // The content "fn bar_new() {}" has len=16, so each f32 = 16.0 (no prefix).
+        let expected_fresh = vec!["fn bar_new() {}".len() as f32; 4];
+        assert_eq!(
+            records[1].vector, expected_fresh,
+            "chunk 1 (bar_new) gets fresh embedding"
+        );
+    }
+
+    // --- AC: New file (empty cache) → all chunks embedded ---
+
+    #[tokio::test]
+    async fn reindex_plan_empty_cache_embeds_all_chunks() {
+        let embedder = CountingEmbedder::new(4);
+        let chunks = vec![
+            make_chunk("c1", "fn a() {}", "hash-a", "src/new.rs", 1, 3, None),
+            make_chunk("c2", "fn b() {}", "hash-b", "src/new.rs", 4, 6, None),
+        ];
+        let cache: HashMap<String, Vec<f32>> = HashMap::new(); // empty — new file
+
+        let (records, plan) = plan_reindex(&chunks, &cache, &embedder, 1_700_000_001)
+            .await
+            .expect("plan_reindex must succeed");
+
+        assert_eq!(
+            embedder.calls(),
+            1,
+            "one embed_documents call for all chunks"
+        );
+        assert_eq!(embedder.texts_embedded(), 2, "both chunks embedded");
+        assert_eq!(plan.reused, 0);
+        assert_eq!(plan.embedded, 2);
+        assert_eq!(records.len(), 2);
+
+        // CountingEmbedder returns vec![content.len() as f32; dim] (no prefix).
+        let expected_a = vec!["fn a() {}".len() as f32; 4];
+        let expected_b = vec!["fn b() {}".len() as f32; 4];
+        assert_eq!(records[0].vector, expected_a);
+        assert_eq!(records[1].vector, expected_b);
+    }
+
+    // --- AC: Output ChunkRow order matches input chunk order ---
+
+    #[tokio::test]
+    async fn reindex_plan_output_order_matches_input_order() {
+        let embedder = CountingEmbedder::new(4);
+        // Alternating cache hits and misses to stress ordering.
+        let chunks = vec![
+            make_chunk("c1", "content-A", "hash-A", "src/x.rs", 1, 2, None), // miss
+            make_chunk("c2", "content-B", "hash-B", "src/x.rs", 3, 4, None), // hit
+            make_chunk("c3", "content-C", "hash-C", "src/x.rs", 5, 6, None), // miss
+            make_chunk("c4", "content-D", "hash-D", "src/x.rs", 7, 8, None), // hit
+        ];
+        let cached_b: Vec<f32> = vec![2.0, 2.0, 2.0, 2.0];
+        let cached_d: Vec<f32> = vec![4.0, 4.0, 4.0, 4.0];
+        let mut cache: HashMap<String, Vec<f32>> = HashMap::new();
+        cache.insert("hash-B".to_string(), cached_b.clone());
+        cache.insert("hash-D".to_string(), cached_d.clone());
+
+        let (records, plan) = plan_reindex(&chunks, &cache, &embedder, 0)
+            .await
+            .expect("plan_reindex must succeed");
+
+        assert_eq!(records.len(), 4);
+        assert_eq!(plan.reused, 2);
+        assert_eq!(plan.embedded, 2);
+
+        // Verify IDs are in original order.
+        let ids: Vec<&str> = records.iter().map(|r| r.id.as_str()).collect();
+        assert_eq!(ids, vec!["c1", "c2", "c3", "c4"]);
+
+        // Cache hits keep their vectors.
+        assert_eq!(records[1].vector, cached_b);
+        assert_eq!(records[3].vector, cached_d);
+
+        // Cache misses got fresh embeddings (CountingEmbedder: vec![content.len(); 4]).
+        let expected_a = vec!["content-A".len() as f32; 4];
+        let expected_c = vec!["content-C".len() as f32; 4];
+        assert_eq!(records[0].vector, expected_a);
+        assert_eq!(records[2].vector, expected_c);
+    }
+
+    // --- AC: language None → "unknown"; language Some → as_str(); line numbers as u32 ---
+
+    #[tokio::test]
+    async fn reindex_plan_maps_language_and_line_numbers_correctly() {
+        let embedder = CountingEmbedder::new(4);
+        let chunks = vec![
+            make_chunk(
+                "rust-fn",
+                "fn r() {}",
+                "h-rust",
+                "src/r.rs",
+                10,
+                20,
+                Some(Language::Rust),
+            ),
+            make_chunk("unknown-fn", "def p():", "h-py", "src/u.rs", 1, 5, None),
+            make_chunk(
+                "ts-fn",
+                "function t() {}",
+                "h-ts",
+                "src/t.ts",
+                100,
+                200,
+                Some(Language::TypeScript),
+            ),
+        ];
+        let cache: HashMap<String, Vec<f32>> = HashMap::new();
+
+        let (records, _plan) = plan_reindex(&chunks, &cache, &embedder, 9999)
+            .await
+            .expect("plan_reindex must succeed");
+
+        assert_eq!(records.len(), 3);
+
+        // Language mapping.
+        assert_eq!(records[0].language, "rust");
+        assert_eq!(records[1].language, "unknown");
+        assert_eq!(records[2].language, "typescript");
+
+        // Line number u32 mapping.
+        assert_eq!(records[0].start_line, 10u32);
+        assert_eq!(records[0].end_line, 20u32);
+        assert_eq!(records[2].start_line, 100u32);
+        assert_eq!(records[2].end_line, 200u32);
+
+        // last_modified propagated.
+        for r in &records {
+            assert_eq!(r.last_modified, 9999);
+        }
     }
 }
