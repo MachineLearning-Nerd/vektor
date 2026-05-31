@@ -94,6 +94,10 @@ fn mcp_stdio_initialize_list_and_call() {
     assert_tool_schema_property(tools, "search_code", "mode");
     assert_tool_schema_property(tools, "get_context_for_prompt", "max_files");
 
+    // `index_codebase` is now a REAL async handler. Pointed at a non-existent
+    // path, it fails gracefully (path validation) and returns a structured JSON
+    // error object — never a protocol error, never a panic, and (crucially for
+    // the stdio transport) nothing leaks onto stdout besides the JSON-RPC frame.
     send(
         &mut stdin,
         json!({
@@ -102,7 +106,7 @@ fn mcp_stdio_initialize_list_and_call() {
             "method": "tools/call",
             "params": {
                 "name": "index_codebase",
-                "arguments": { "path": "/tmp/dummy" }
+                "arguments": { "path": "/nonexistent/vektor/serve/test/path" }
             }
         }),
     );
@@ -110,15 +114,12 @@ fn mcp_stdio_initialize_list_and_call() {
     assert_eq!(call_response["id"], 3);
     assert_eq!(call_response["result"]["isError"], false);
     assert_eq!(
-        call_response["result"]["structuredContent"]["status"],
-        "not implemented yet"
+        call_response["result"]["structuredContent"]["status"], "error",
+        "bad path yields a structured error status: {call_response:#}"
     );
-    assert!(call_response["result"]["structuredContent"]["phase"].is_string());
     assert!(
-        call_response["result"]["content"][0]["text"]
-            .as_str()
-            .expect("tool text")
-            .contains("not implemented yet")
+        call_response["result"]["structuredContent"]["error"].is_string(),
+        "error response carries a message: {call_response:#}"
     );
 
     send(

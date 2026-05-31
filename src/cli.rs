@@ -175,7 +175,10 @@ pub(crate) async fn index_path(path: &Path, config: &Config, force: bool) -> Res
 ///   success or `Failed` on read error;
 /// - chunks whose content trips `contains_secret` are dropped BEFORE embedding so
 ///   secrets never reach the embedder or the vector store.
-async fn index_path_with_embedder(
+///
+/// `pub(crate)`: the MCP handler's integration test drives this directly with a
+/// fake embedder + tempdir store to exercise the full tool flow without a model.
+pub(crate) async fn index_path_with_embedder(
     root: &Path,
     files: Vec<IndexFile>,
     config: &Config,
@@ -324,7 +327,7 @@ fn language_label(language: Option<Language>) -> &'static str {
     language.map(Language::as_str).unwrap_or("unknown")
 }
 
-fn collect_index_files(
+pub(crate) fn collect_index_files(
     input: &Path,
     config: &crate::config::Config,
 ) -> Result<(PathBuf, Vec<IndexFile>)> {
@@ -396,7 +399,7 @@ fn normalized_path(path: &Path) -> String {
 }
 
 #[derive(Debug)]
-struct IndexFile {
+pub(crate) struct IndexFile {
     path: PathBuf,
     rel_path: String,
 }

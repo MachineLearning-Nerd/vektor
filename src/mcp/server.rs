@@ -51,13 +51,18 @@ impl ServerHandler for VektorServer {
         crate::mcp::schemas::get_tool(name)
     }
 
-    fn call_tool(
+    async fn call_tool(
         &self,
         request: CallToolRequestParams,
         _context: RequestContext<RoleServer>,
-    ) -> impl Future<Output = Result<CallToolResult, ErrorData>> + Send + '_ {
-        let result = match request.name.as_ref() {
-            "index_codebase" => Ok(handlers::handle_index_codebase(request.arguments)),
+    ) -> Result<CallToolResult, ErrorData> {
+        // `index_codebase` is async (builds the embedder + LanceDB store and runs
+        // the shared index core), so the dispatch awaits it. The other tools are
+        // still synchronous no-op skeletons. None of the handlers write to stdout
+        // (the stdio transport owns it); errors surface as JSON in the structured
+        // result rather than as protocol errors.
+        let result: Result<serde_json::Value, ErrorData> = match request.name.as_ref() {
+            "index_codebase" => Ok(handlers::handle_index_codebase(request.arguments).await),
             "search_code" => Ok(handlers::handle_search_code(request.arguments)),
             "get_context_for_prompt" => {
                 Ok(handlers::handle_get_context_for_prompt(request.arguments))
@@ -68,6 +73,6 @@ impl ServerHandler for VektorServer {
             )),
         };
 
-        future::ready(result.map(CallToolResult::structured))
+        result.map(CallToolResult::structured)
     }
 }
