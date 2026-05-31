@@ -7,6 +7,7 @@ mod config;
 mod discovery;
 mod error;
 mod mcp;
+mod secrets;
 mod state;
 mod telemetry;
 

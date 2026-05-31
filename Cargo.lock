@@ -7081,6 +7081,7 @@ dependencies = [
  "notify",
  "ort",
  "rayon",
+ "regex",
  "reqwest 0.13.4",
  "rmcp",
  "rusqlite",
