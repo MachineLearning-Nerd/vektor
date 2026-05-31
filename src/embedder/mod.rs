@@ -1,3 +1,9 @@
+mod onnx;
+
+// Constructed by the factory in task 3.5; allow until then.
+#[allow(unused_imports)]
+pub use onnx::OnnxEmbedder;
+
 /// Shared async embedding backend contract.
 ///
 /// The trait owns document/query prefix handling (Jina v2 `"search_document: "` /

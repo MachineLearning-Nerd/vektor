@@ -189,7 +189,12 @@ pub(crate) fn project_data_dir(project_root: &Path, config: &Config) -> Result<P
     Ok(expand_data_dir(&config.index.data_dir)?.join(project_key))
 }
 
-fn expand_data_dir(data_dir: &str) -> Result<PathBuf> {
+/// Expand a configured `data_dir` string into an absolute path, resolving a
+/// leading `~` / `~/` / `~\` to the user's home directory.
+///
+/// Shared with `embedder::onnx` so model-artifact resolution uses the exact
+/// same home-expansion rule as project state — never duplicate this logic.
+pub(crate) fn expand_data_dir(data_dir: &str) -> Result<PathBuf> {
     if data_dir == "~" {
         return dirs::home_dir()
             .ok_or_else(|| VektorError::Config("home directory not found".into()));
