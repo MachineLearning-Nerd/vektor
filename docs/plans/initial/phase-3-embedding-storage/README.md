@@ -5,47 +5,58 @@
 **Roadmap mapping**: Stage 2 / `v0.3.0`
 **PRD mapping**: Section 4.2 (Embedder), Section 4.10 (LanceDB schema), Section 6 (Embedding backends), Section 12 Week 3 Functions 3.1–3.9, plus brought-forward B1.2/B1.5 (SecretDetector) and B6.1 (`vektor models download`)
 **Effort estimate**: 4–6 weeks of focused part-time work — this is the hardest phase due to ONNX integration
-**Status**: ⬜ Not started — readiness only. Per-task files are NOT yet written; expand them only after the Phase 2 publish gate is explicitly approved.
+**Status**: ✅ Done — all 15 task files complete; `v0.3.0` prepared as a private notes-only release (tag/publish pending separate human authorization). See `release-notes-v0.3.0.md`.
 
 ---
 
 ## Task list
 
-Do not start implementation from this table directly. These rows are the phase-level roadmap; task files must be written and reviewed before any Phase 3 code changes.
+Do not start implementation from this table directly. These rows are the phase-level roadmap; the linked task files are the executable specifications.
 
 | ID | Task | Effort | Depends on | Status |
 |---|---|---|---|---|
-| 3.1 | `Embedder` trait — async, `embed/dim/name/prefix_for_document/prefix_for_query` | S | 2.9 | ⬜ |
-| 3.2 | `OnnxEmbedder::new(model_name)` — load ONNX model + `tokenizer.json` via `ort` + `tokenizers`; warm-up | L | 3.1 | ⬜ |
-| 3.3 | `OnnxEmbedder::embed(texts)` — prefix prepend → tokenize → run session → mean-pool → L2-normalize → batch in 32 | L | 3.2 | ⬜ |
-| 3.4 | `OpenAiCompatEmbedder::embed` — HTTP POST to `/v1/embeddings`, exponential backoff on 429 | M | 3.1 | ⬜ |
-| 3.5 | `build_embedder(config) -> Box<dyn Embedder>` factory with fallback-to-ONNX behavior | S | 3.2, 3.3, 3.4 | ⬜ |
-| 3.6 | `VectorStore::new(project_dir, dim)` — LanceDB connect, create table with Arrow schema from PRD Section 4.10 | M | 2.9 | ⬜ |
-| 3.7 | `VectorStore::reindex_file(rel_path, chunks, embedder)` — delete-then-insert with chunk-level embedding cache | XL → split into 3.7a (read-before-delete), 3.7b (delete_by_file + reuse map), 3.7c (insert RecordBatch) | 3.5, 3.6 | ⬜ |
-| 3.8 | `VectorStore::search(query_vec, top_k, filter)` — ANN query via LanceDB `nearest_to`, SQL-like filter | M | 3.6 | ⬜ |
-| 3.9 | `VectorStore::delete_by_file(rel_path)` — LanceDB delete predicate | S | 3.6 | ⬜ |
-| 3.10 | `SecretDetector` module — ~50 gitleaks regexes + Shannon-entropy check + file-level skip list (B1.2/B1.5) | M | 2.1 | ⬜ |
-| 3.11 | `vektor models download [--lite]` subcommand — idempotent, resumable, progress bar (B6.1) | M | 3.2 | ⬜ |
-| 3.12 | `v0.3.0` release tag + Phase 4 expansion | M | 3.7c, 3.10, 3.11 | ⬜ |
+| 3.0 | [Extend `VektorError` taxonomy — embedding/storage/network variants (review pre-task)](00-error-taxonomy.md) | S | 1.2 | ✅ Done — `bfc4037` |
+| 3.1 | [`Embedder` trait — async, `embed/dim/name/prefix_for_document/prefix_for_query`](01-embedder-trait.md) | S | 2.9, 3.0 | ✅ Done — `2b557a5` |
+| 3.2 | [`OnnxEmbedder::new` — load local ONNX model + `tokenizer.json` via `ort` + `tokenizers`; warm-up](02-onnx-embedder-new.md) | L | 3.1 | ✅ Done — `214fa09` |
+| 3.3 | [`OnnxEmbedder::embed(texts)` — prefix prepend → tokenize → run session → mean-pool → L2-normalize → batch in 32](03-onnx-embedder-embed.md) | L | 3.2 | ✅ Done — `56aa16a` |
+| 3.4 | [`OpenAiCompatEmbedder::embed` — HTTP POST to `/v1/embeddings`, exponential backoff on 429](04-openai-compat-embedder.md) | M | 3.1 | ✅ Done — `5d6505d` (+ key redaction `da5d966`) |
+| 3.5 | [`build_embedder(config) -> Box<dyn Embedder>` factory with fallback-to-ONNX behavior](05-build-embedder-factory.md) | S | 3.2, 3.3, 3.4 | ✅ Done — `610ecf5` |
+| 3.6 | [`VectorStore::new(project_dir, dim)` — LanceDB connect, create table with Arrow schema from PRD Section 4.10](06-vector-store-new.md) | M | 2.9, 3.0 | ✅ Done — `b51207c` |
+| 3.7a | [`VectorStore` read-before-delete cache](07a-vector-store-cache-read.md) | M | 3.6 | ✅ Done — `bc77f96` |
+| 3.7b | [`VectorStore` reindex reuse planning](07b-vector-store-reindex-reuse.md) | M | 3.5, 3.7a, 3.9 | ✅ Done — `b55faa7` |
+| 3.7c | [`VectorStore` insert + `vektor index` integration + `index_codebase` MCP handler (vector-only)](07c-vector-store-insert-and-index-cli.md) | L | 3.7b, 3.10 | ✅ Done — `928321e` + `afb1fb9` |
+| 3.8 | [`VectorStore::search(query_vec, top_k, filter)` — ANN query via LanceDB `nearest_to`, SQL-like filter](08-vector-store-search.md) | M | 3.7c | ✅ Done — `72b281d` |
+| 3.9 | [`VectorStore::delete_by_file(rel_path)` — LanceDB delete predicate](09-vector-store-delete-by-file.md) | S | 3.6 | ✅ Done — `b7797e2` |
+| 3.10 | [`SecretDetector` module — static rules + entropy check + file-level skip list (B1.2/B1.5)](10-secret-detector.md) | M | 2.1 | ✅ Done — `074829c` |
+| 3.11 | [`vektor models download [--lite]` subcommand — idempotent, resumable, progress bar (B6.1)](11-models-download.md) | M | 3.2 | ✅ Done — `6019ff8` |
+| 3.12 | [`v0.3.0` release readiness + Phase 4 expansion](12-v0.3.0-release.md) | M | 3.7c, 3.8, 3.10, 3.11 | ✅ Done — `(this commit)` |
 
 ---
 
 ## Phase exit criteria
 
-All must be true before tagging `v0.3.0`:
+All must be true before tagging `v0.3.0`. Verification status as of task 3.12;
+model/network-dependent criteria are exercised by `#[ignore]`d smoke tests and
+run manually after `vektor models download` (no network/model in CI). See
+`release-notes-v0.3.0.md` for the full evidence table + manual commands.
 
-- [ ] All 12+ tasks above marked ✅ Done (note 3.7 will be split into ≥3 sub-tasks per the per-task files written by task 2.9)
-- [ ] `vektor models download` produces `~/.vektor/models/jina-embeddings-v2-base-code/model.onnx` + `tokenizer.json`
-- [ ] `vektor index <repo>` chunks files (Phase 2), embeds them (3.3), and writes to `~/.vektor/<project>/lance/` (3.7)
-- [ ] Running `vektor index` twice on an unchanged repo skips re-embedding (chunk-level cache via content_hash works)
-- [ ] Modifying one function in a 10-file repo re-embeds only the changed chunks, not the whole file (per PRD §4.5 fix)
-- [ ] Planting an AWS key (`AKIAIOSFODNN7EXAMPLE`) in a test repo: indexing skips that chunk and logs a warning (B1.2 verified)
-- [ ] `.env` file in the test repo is not even read into memory (B1.5 verified)
-- [ ] Switching `config.embedding.backend` from `onnx` to `openai` with a valid API key: indexing succeeds via the cloud backend
-- [ ] LanceDB table has the full schema from PRD §4.10 (id, content_hash, vector, rel_path, start_line, end_line, symbol_name, symbol_type, language, content, last_modified)
-- [ ] First-query cold-start latency <5s due to ONNX warm-up
-- [ ] CI green; tag pushed; release artifacts uploaded
-- [ ] Phase 4 per-task files written before Phase 4 starts
+- [x] All 15 task files above marked ✅ Done
+- [~] `vektor models download` produces `~/.vektor/models/jinaai--jina-embeddings-v2-base-code/onnx/model.onnx` + `tokenizer.json` — **manual** (`#[ignore]`d HF smoke tests; needs network)
+- [~] `vektor index <repo>` chunks files (Phase 2), embeds them (3.3), and writes to `~/.vektor/<project>/lance/` (3.7c) — **manual** (direct `vektor index src/` commands in `release-notes-v0.3.0.md`; needs downloaded model)
+- [x] `index_codebase` MCP tool indexes a repo via the same shared core as the CLI and returns real stats (vector-only in Phase 3; BM25 added in Phase 4 task 4.6) — no longer the not-implemented stub (verified via fake-embedder MCP handler test)
+- [x] Running `vektor index` twice on an unchanged repo skips re-embedding (chunk-level cache via content_hash works) — verified via `vector_store` reuse/`plan_reindex` tests
+- [x] Modifying one function in a 10-file repo re-embeds only the changed chunks, not the whole file (per PRD §4.5 fix) — verified via reindex-reuse tests
+- [x] Planting an AWS key (`AKIAIOSFODNN7EXAMPLE`) in a test repo: indexing skips that chunk and logs a warning (B1.2) — verified via `secrets` + `index_codebase` tests (`skipped_secrets >= 1`)
+- [x] `.env` file in the test repo is not even read into memory (B1.5) — verified via discovery skip-list tests
+- [x] Switching `config.embedding.backend` from `onnx` to `openai` with a valid API key: indexing succeeds via the cloud backend — verified via `wiremock`-mocked OpenAI embedder tests (full E2E with a real key is manual)
+- [x] LanceDB table has the full schema from PRD §4.10 (id, content_hash, vector, rel_path, start_line, end_line, symbol_name, symbol_type, language, content, last_modified) — verified via schema + insert/search/delete tests
+- [~] First-query cold-start latency <5s due to ONNX warm-up — warm-up implemented in `OnnxEmbedder::new`; latency **measured manually** after model download
+- [~] CI green; tag pushed; private notes-only GitHub Release published — tag/push/Release is a **separate human-authorized step** (sequence documented in `release-notes-v0.3.0.md`). Binary release artifacts remain deferred to Phase 6 / task 6.2.
+- [x] Phase 4 per-task files written before Phase 4 starts — `01-..08-*.md` under `phase-4-search-mcp/`
+
+> Legend: `[x]` verified by the runnable test suite (`cargo test --workspace`,
+> 231 passed / 7 ignored); `[~]` model/network-dependent or outward-facing —
+> covered by `#[ignore]`d smoke tests / documented manual commands.
 
 ---
 
@@ -53,7 +64,7 @@ All must be true before tagging `v0.3.0`:
 
 - BM25 / Tantivy indexing (Phase 4)
 - RRF fusion or hybrid search (Phase 4)
-- Real MCP tool handlers — `index_codebase` becomes real here, but `search_code` and `get_context_for_prompt` remain no-op stubs until Phase 4–5
+- Real MCP tool handlers — `index_codebase` becomes real here but **vector-only** (BM25 is added in Phase 4 task 4.6, which extends this same handler once Tantivy exists). `search_code` and `get_context_for_prompt` remain no-op stubs until Phase 4–5
 - Ollama backend (Phase 5 — defer; OnnxEmbedder + OpenAI cover most users)
 - Two-tier indexing (`ShallowIndexer` is Phase 5)
 
@@ -61,7 +72,7 @@ All must be true before tagging `v0.3.0`:
 
 ## Notes
 
-- **Phase 2 handoff**: discovery, HashStore, chunking, and Phase 2 `vektor index` behavior exist locally. Phase 3 consumes those APIs after the `v0.2.0` publish gate is approved and per-task files are expanded.
+- **Phase 2 handoff**: discovery, HashStore, chunking, and Phase 2 `vektor index` behavior exist on main. Phase 3 consumes those APIs through the task files above.
 - **ONNX integration is the hardest single task**. Reading the `ort 2.0.0-rc.12` docs and one working example before writing 3.2/3.3 saves multiple hours of debugging mean-pooling math.
 - **L2 normalization is required for cosine-via-dot-product**: if vectors aren't unit-norm, the LanceDB ANN scores are meaningless. Verify by computing `vec.iter().map(|x| x*x).sum::<f32>().sqrt()` after normalization; must equal 1.0 ± 1e-5.
 - **Don't pin arrow versions** (per PRD Section 11 fix): let `lancedb 0.29` own arrow's version transitively. If `cargo tree -d` shows duplicate arrow versions, fix at the consumer side — never patch lancedb.

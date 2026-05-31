@@ -175,14 +175,26 @@ impl HashStore {
 }
 
 fn project_state_db_path(project_root: &Path, config: &Config) -> Result<PathBuf> {
-    let canonical_root = project_root.canonicalize()?;
-    let project_key = hash_content(&canonical_root.to_string_lossy());
-    Ok(expand_data_dir(&config.index.data_dir)?
-        .join(project_key)
-        .join("state.db"))
+    Ok(project_data_dir(project_root, config)?.join("state.db"))
 }
 
-fn expand_data_dir(data_dir: &str) -> Result<PathBuf> {
+/// Resolve the project-scoped data directory `<data_dir>/<project-hash>/`.
+///
+/// The project hash is a SHA-256 of the canonicalized project root, so every
+/// per-project artifact (`state.db`, the LanceDB `lance/` dir, sidecar
+/// metadata) colocates under the same directory. Shared with `vector_store`.
+pub(crate) fn project_data_dir(project_root: &Path, config: &Config) -> Result<PathBuf> {
+    let canonical_root = project_root.canonicalize()?;
+    let project_key = hash_content(&canonical_root.to_string_lossy());
+    Ok(expand_data_dir(&config.index.data_dir)?.join(project_key))
+}
+
+/// Expand a configured `data_dir` string into an absolute path, resolving a
+/// leading `~` / `~/` / `~\` to the user's home directory.
+///
+/// Shared with `embedder::onnx` so model-artifact resolution uses the exact
+/// same home-expansion rule as project state — never duplicate this logic.
+pub(crate) fn expand_data_dir(data_dir: &str) -> Result<PathBuf> {
     if data_dir == "~" {
         return dirs::home_dir()
             .ok_or_else(|| VektorError::Config("home directory not found".into()));

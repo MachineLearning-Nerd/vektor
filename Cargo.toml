@@ -1,6 +1,6 @@
 [package]
 name = "vektor"
-version = "0.2.0"
+version = "0.3.0"
 edition = "2024"
 description = "Local-first coding context engine MCP server"
 license = "MIT"
@@ -35,7 +35,24 @@ reqwest = { version = "0.13", features = ["json"] }
 # NOTE: Do NOT independently pin arrow versions. Let lancedb dictate the arrow version
 # via its transitive dependency to avoid type-mismatch compilation failures. (v2.3 fix)
 lancedb = "0.29"
-# arrow, arrow-array, arrow-schema versions are inherited from lancedb
+# arrow, arrow-schema versions are inherited from lancedb (it re-exports arrow_schema).
+# arrow-array is NOT re-exported by lancedb 0.29 (only `lancedb::arrow::arrow_schema` is),
+# yet building the RecordBatches that `Table::add` consumes requires its array builders
+# (StringArray, UInt32Array, FixedSizeListArray, ...). We depend on the major version
+# lancedb resolves transitively ("58") rather than an exact pin, so cargo unifies it to
+# the single arrow-array already in the lockfile (58.3.0) — no second arrow version, no
+# type-mismatch trap. This honors the v2.3 "don't independently pin arrow" rule (it's the
+# exact pin, not the dependency edge, that causes the mismatch). Used by 3.9 (insert +
+# delete tests) and reused by 3.7a/3.7c.
+arrow-array = "58"
+
+# Async stream collection — collecting LanceDB query result `RecordBatch`es
+# (`SendableRecordBatchStream`, which is `Stream<Item = Result<RecordBatch>>`)
+# requires `futures::TryStreamExt::try_collect`. `futures` 0.3 is already in the
+# lockfile transitively (via lancedb); we depend on it directly so the import is
+# a first-class dependency rather than relying on a transitive edge. Used by 3.7a
+# (read-before-delete cache) and reused by 3.8 (search) result collection.
+futures = "0.3"
 
 # Full-Text Search
 tantivy = "0.26"
@@ -64,11 +81,15 @@ indicatif = "0.18"
 uuid = { version = "1", features = ["v4"] }
 lru = "0.18"
 sysinfo = "0.38"
+# Phase 3 (task 3.10) — regex for secret pattern matching
+regex = "1"
 
 [dev-dependencies]
 temp-env = "0.3"
 tempfile = "3"
+# wiremock: async HTTP mock server used by task 3.4 (openai.rs) tests.
+# Dev-only — zero prod dependency surface. Integrates directly with tokio + reqwest.
+wiremock = "0.6"
 
 # Phase 2 (uncomment when needed)
 # git2 = "0.21"
-# regex = "1"
