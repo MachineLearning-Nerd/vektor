@@ -18,7 +18,7 @@
 | 4.3 | `TextIndex::search(query, top_k)` — BM25 with en_stem tokenizer | M | 4.2 | ⬜ |
 | 4.4 | `rrf_fuse(semantic, keyword, k)` + `AdaptiveWeights::compute` + `SynonymExpander` (~50 entries) | M | 3.12 | ⬜ |
 | 4.5 | `search_hybrid(query, config)` — tokio::join! of vector + text search → RRF fusion | M | 3.8, 4.3, 4.4 | ⬜ |
-| 4.6 | `index_codebase(path, config, force)` orchestrator — discover → hash → chunk → embed → store + Tantivy | L | 3.7, 4.2 | ⬜ |
+| 4.6 | `index_codebase(path, config, force)` orchestrator — discover → hash → chunk → embed → store + Tantivy | L | 3.7c, 4.2 | ⬜ |
 | 4.7 | MCP server: replace no-op handlers from task 1.6 with real `search_code` + `index_codebase` dispatch | M | 1.6, 4.6 | ⬜ |
 | 4.8 | Basic `get_context_for_prompt` handler — search → top-k results → return without dedup/budget (full assembly is Phase 5) | M | 4.5, 4.7 | ⬜ |
 

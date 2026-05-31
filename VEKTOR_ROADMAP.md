@@ -83,6 +83,7 @@ Each arrow is a hard gate — the next stage does not begin until the previous s
 | `v0.1.0` publish (`1.7b`) | ✅ Tag + GitHub Release exist (private); CI green on the tag commit. **Public flip + unauthenticated source-install gate deferred to launch (`v0.4.0`)** by deliberate decision — not pending. |
 | Phase 2 discovery + chunking implementation | ✅ Done locally on `phase-2-discovery-chunking`: file discovery, HashStore, AST/sliding chunking, Phase 2 `vektor index` behavior |
 | `v0.2.0` publish | ✅ Tag + GitHub Release exist (private); CI green on the tag commit. Phase 2 merged via PR #1; repo stays private until launch. |
+| Phase 3 task expansion | ✅ Done: `docs/plans/initial/phase-3-embedding-storage/` has task files for 3.1-3.12, with 3.7 split into 3 subtasks. Phase 3 implementation has not started. |
 
 > **Release-visibility decision (2026-05-29):** the repo stays **PRIVATE until Vektor is launch-ready (`v0.4.0`)**. `v0.1.0` (and any interim `v0.2.0`/`v0.3.0`) are tagged + released **privately** — reachable only by authenticated collaborators. Going public is a one-way, launch-time action that requires explicit authorization; before flipping, curate what becomes world-visible (notably `VEKTOR_PRD.md`, which holds the competitive playbook). Until launch, the "unauthenticated source install" gate is **intentionally deferred, not blocked**. Do not flip to public — or suggest it — before the `v0.4.0` launch.
 
@@ -132,7 +133,7 @@ Bring the PRD into a state where every implementation conversation downstream pr
 **PRD reference**: Sections 4, 6, 11, 12 (Weeks 1–6 of PRD Phase 1) + B6 from review + brought-forward items (B1, `vektor init`, C8.1, C8.2, lightweight benchmark, README/LICENSE)
 **Depends on**: Stage 1 complete
 **Effort**: Large (timeline lifted; estimate 14–18 weeks part-time for a Rust learner — slightly larger than v2.5 estimate to absorb the brought-forward items)
-**Status**: In progress — `v0.2.0` discovery/chunking implemented locally; publish actions remain explicitly gated
+**Status**: In progress — `v0.2.0` is published privately; Phase 3 task files are ready and embedding/storage implementation has not started.
 
 ### Goal
 A working MCP server that can index a real codebase, perform hybrid BM25 + semantic search, and assemble token-budgeted context — **with the security, distribution, and launch prerequisites a stranger needs to actually use the binary on day one.** No more "alpha that only the author can run."

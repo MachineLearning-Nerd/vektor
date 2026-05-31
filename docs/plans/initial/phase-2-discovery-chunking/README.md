@@ -41,11 +41,11 @@ Implementation gates:
 
 Publish gates:
 
-- [ ] Final release commit pushed to `origin/main`
-- [ ] CI matrix green on the exact release commit
-- [ ] Git tag `v0.2.0` pushed
-- [ ] GitHub Release notes published. Binary release artifacts are still deferred to v0.4.0 / task 6.2.
-- [ ] Phase 3 per-task files written before Phase 3 implementation starts
+- [x] Final release commit pushed to `origin/main`
+- [x] CI matrix green on the exact release commit
+- [x] Git tag `v0.2.0` pushed
+- [x] GitHub Release notes published. Binary release artifacts are still deferred to v0.4.0 / task 6.2.
+- [x] Phase 3 per-task files written before Phase 3 implementation starts
 
 ---
 
@@ -73,6 +73,6 @@ The MCP server still responds with no-op handlers from v0.1.0. `vektor index` ac
 ## When this phase completes
 
 1. Keep tasks 2.1-2.8 marked ✅ in the table with commit hashes.
-2. Keep `v0.2.0` tag/GitHub Release pending until explicit publish approval.
+2. `v0.2.0` tag/GitHub Release are complete privately; keep the repo private until the launch gate.
 3. Update Current State tables (this README, `docs/plans/initial/README.md`, `VEKTOR_ROADMAP.md`).
-4. Treat Phase 3 as readiness-only until its per-task files are expanded and the release/publish gate is approved.
+4. Start Phase 3 from its per-task files; do not implement from the phase table directly.
