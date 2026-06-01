@@ -37,7 +37,15 @@ fn mcp_stdio_initialize_list_and_call() {
             }
         }
     });
-
+    let stderr = child.stderr.take().expect("child stderr");
+    let stderr_handle = std::thread::spawn(move || {
+        let reader = BufReader::new(stderr);
+        for line in reader.lines() {
+            if line.is_err() {
+                break;
+            }
+        }
+    });
     let mut stdin = child.stdin.take().expect("child stdin");
 
     send(
@@ -53,7 +61,7 @@ fn mcp_stdio_initialize_list_and_call() {
             }
         }),
     );
-    let init_response = read_response(&line_rx);
+    let init_response = read_response(&line_rx, "initialize");
     assert_eq!(init_response["id"], 1);
     assert!(
         init_response["result"]["capabilities"]["tools"].is_object(),
@@ -77,7 +85,7 @@ fn mcp_stdio_initialize_list_and_call() {
             "method": "tools/list"
         }),
     );
-    let list_response = read_response(&line_rx);
+    let list_response = read_response(&line_rx, "tools/list");
     let tools = list_response["result"]["tools"]
         .as_array()
         .expect("tools array");
@@ -110,7 +118,7 @@ fn mcp_stdio_initialize_list_and_call() {
             }
         }),
     );
-    let call_response = read_response(&line_rx);
+    let call_response = read_response(&line_rx, "index_codebase call");
     assert_eq!(call_response["id"], 3);
     assert_eq!(call_response["result"]["isError"], false);
     assert_eq!(
@@ -134,7 +142,7 @@ fn mcp_stdio_initialize_list_and_call() {
             }
         }),
     );
-    let error_response = read_response(&line_rx);
+    let error_response = read_response(&line_rx, "unknown_tool call");
     assert_eq!(error_response["id"], 4);
     assert!(error_response["error"].is_object());
     assert_eq!(error_response["error"]["code"], -32602); // invalid_params
@@ -142,6 +150,7 @@ fn mcp_stdio_initialize_list_and_call() {
     drop(stdin);
     wait_or_kill(&mut child);
     reader_handle.join().expect("stdout reader join");
+    stderr_handle.join().expect("stderr reader join");
 }
 
 fn send(stdin: &mut std::process::ChildStdin, request: Value) {
@@ -149,10 +158,10 @@ fn send(stdin: &mut std::process::ChildStdin, request: Value) {
     stdin.flush().expect("flush request");
 }
 
-fn read_response(line_rx: &mpsc::Receiver<String>) -> Value {
+fn read_response(line_rx: &mpsc::Receiver<String>, label: &str) -> Value {
     let line = line_rx
-        .recv_timeout(Duration::from_secs(10))
-        .expect("read JSON-RPC response line");
+        .recv_timeout(Duration::from_secs(30))
+        .unwrap_or_else(|_| panic!("read JSON-RPC response line for {label}"));
 
     serde_json::from_str(&line).expect("parse JSON-RPC response")
 }

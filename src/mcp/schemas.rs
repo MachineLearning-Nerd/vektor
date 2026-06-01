@@ -5,19 +5,19 @@ pub fn tools() -> Vec<Tool> {
     vec![
         Tool::new(
             "index_codebase",
-            "Build or refresh the local codebase index. No-op at v0.1.0.",
+            "Build or refresh the local codebase index.",
             index_codebase_schema(),
         )
         .with_title("Index codebase"),
         Tool::new(
             "search_code",
-            "Search indexed code. No-op at v0.1.0.",
+            "Search indexed code with hybrid semantic and keyword ranking.",
             search_code_schema(),
         )
         .with_title("Search code"),
         Tool::new(
             "get_context_for_prompt",
-            "Assemble token-budgeted context for a prompt. No-op at v0.1.0.",
+            "Assemble token-budgeted context for a prompt.",
             get_context_for_prompt_schema(),
         )
         .with_title("Get context for prompt"),
