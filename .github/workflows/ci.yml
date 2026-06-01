@@ -1,20 +1,30 @@
 name: CI
 
-# Build + lint + test gate for every push to main and every PR targeting main.
+# Build + lint + test gate — DISABLED for cost (manual-only).
 #
-# Lite matrix (v0.1.0): macOS-aarch64 + linux-x86_64.
+# macOS runners bill at 10x included minutes; this repo is in solo, private,
+# doc-heavy development, so the gate now runs LOCALLY via `scripts/ci.sh`
+# (run it before pushing). This workflow is retained manual-only so you can
+# still trigger a full cloud build from the Actions tab before a release —
+# a manual run exercises BOTH macOS + Linux, which is what you want for
+# release validation.
+#
+# To re-enable automatic CI (e.g. at launch / when contributors arrive),
+# uncomment the push/pull_request triggers below — they already carry a
+# paths-ignore for docs so doc-only commits won't burn runner minutes.
+#
 # Full 5-platform matrix lands in task 6.2 with the release pipeline (adds
-# macOS-x86_64, linux-aarch64, windows-x86_64).
-#
-# Pre-commit hooks (task 0.3) run the same checks locally; CI is the source
-# of truth for pass/fail. cargo-deny (task 0.4) runs in a separate workflow
-# (.github/workflows/audit.yml) on Cargo.toml/Cargo.lock/deny.toml changes.
+# macOS-x86_64, linux-aarch64, windows-x86_64). cargo-deny (task 0.4) still
+# runs automatically in .github/workflows/audit.yml (Ubuntu-only, cheap).
 
 on:
-  push:
-    branches: [main]
-  pull_request:
-    branches: [main]
+  workflow_dispatch:        # manual trigger only — $0 until you run it
+  # push:
+  #   branches: [main]
+  #   paths-ignore: ['**.md', 'docs/**']
+  # pull_request:
+  #   branches: [main]
+  #   paths-ignore: ['**.md', 'docs/**']
 
 # Cancel an in-flight run when a newer commit lands on the same ref.
 concurrency:
