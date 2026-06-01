@@ -38,12 +38,23 @@ produces a queryable LanceDB table AND a committed Tantivy index.
   insert new Tantivy entries").
 - A single `TextIndex::commit()` at the END of the pass (PRD §4.3 "batch Tantivy
   commit, once per window — not per file").
+- Processed files remain `Pending` in `HashStore` until the final Tantivy commit
+  succeeds; mark them `Indexed` only after that commit. If the Tantivy commit
+  fails after LanceDB writes, the next run must see `Pending` and reprocess with
+  delete-then-insert rather than trusting an incomplete keyword index.
 - `index_depth = "deep"` on every Tantivy doc (ShallowIndexer is Phase 5).
 - `IndexStats` is unchanged or additively extended; the MCP success JSON still
   returns the Phase 3 fields (`files`, `changed`, ..., `skipped_secrets`). Adding
   a Tantivy doc count is acceptable (additive).
 - Secret-skipped chunks are excluded from Tantivy too (a skipped chunk must not
   be searchable by keyword any more than by vector).
+- The MCP `index_codebase` handler no longer rejects optional arguments that its
+  schema advertises. `force_full` keeps its Phase 3 behavior; `extensions` filters
+  the discovered file set for this run after normalizing entries to lowercase
+  extensions with no leading dot (`".RS"` and `"rs"` both match `*.rs`);
+  `embedding_backend` clones the loaded config and overrides the backend before
+  `build_embedder` runs. Unknown backend values return the same JSON error style
+  as other handler validation failures.
 
 ## Approach
 
@@ -53,11 +64,16 @@ produces a queryable LanceDB table AND a committed Tantivy index.
   `delete_by_file` + `add_chunks` on the Tantivy index using the SAME `chunk_id`s
   (so cross-store join holds). Reuse the secret-filtered chunk set — do not
   re-run discovery or chunking.
-- Commit Tantivy once after the file loop completes (and after the final
-  LanceDB writes), so a crash mid-pass leaves HashStore `pending` and recovery
-  re-runs cleanly (PRD §4.5 crash semantics).
+- Collect `(rel_path, current_hash)` for files that fully processed in both
+  LanceDB and Tantivy's uncommitted writer. Keep those rows `Pending` during the
+  file loop. Commit Tantivy once after the loop; only after that commit succeeds,
+  mark the collected files `Indexed`. A read/chunk/write failure for one file
+  still marks that file `Failed` and does not block successfully processed files.
 - Keep the MCP handler thin: it still just calls the shared core; the core now
   does both stores. The handler's JSON contract is unchanged (additive at most).
+- Remove the Phase 3 `reject_unsupported_arg` path for `extensions` and
+  `embedding_backend`. Implement the optional arguments at the handler/shared-core
+  seam so the advertised `additionalProperties: false` schema is truthful.
 
 ## Acceptance criteria
 
@@ -70,8 +86,17 @@ produces a queryable LanceDB table AND a committed Tantivy index.
       edit updates only that file's Tantivy docs (delete_by_file scoping).
 - [ ] Secret-skipped chunks appear in NEITHER store.
 - [ ] Tantivy commit happens once per pass, not per file.
+- [ ] A Tantivy commit failure leaves processed files `Pending` (or `Failed` for
+      per-file failures), never `Indexed`, so the next run repairs cross-store
+      inconsistency via delete-then-insert.
 - [ ] No regression on Phase 2/3 tests; `IndexStats` JSON contract preserved
       (additive only).
+- [ ] `index_codebase` accepts and honors advertised optional `extensions` and
+      `embedding_backend` arguments instead of returning "not supported" for
+      schema-valid requests.
+- [ ] `extensions` accepts PRD-style dotted values and bare values
+      case-insensitively, and rejects empty/non-string entries as JSON argument
+      errors.
 - [ ] No `unwrap()` outside `#[cfg(test)]`.
 
 ## Verification
@@ -79,7 +104,11 @@ produces a queryable LanceDB table AND a committed Tantivy index.
 ```bash
 cargo build
 cargo test index_cli            # existing Phase 3 tests still green
+cargo test index_cli::tests::tantivy_commit_failure_leaves_files_pending
 cargo test mcp::handlers        # index_codebase handler still returns real stats
+cargo test mcp::handlers::tests::index_codebase_honors_extensions_filter
+cargo test mcp::handlers::tests::index_codebase_normalizes_extension_filters
+cargo test mcp::handlers::tests::index_codebase_honors_embedding_backend_override
 cargo test text_index           # Tantivy writes via the orchestrator
 cargo fmt --check
 cargo clippy --workspace --all-targets -- -D warnings

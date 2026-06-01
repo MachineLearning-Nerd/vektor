@@ -150,9 +150,9 @@ Phase 3 is ✅ Done. All embedding/storage tasks landed; `v0.3.0` is prepared as
 | 4.2 TextIndex::add_chunks | 4.1 | 4.3, 4.6 | 🟡 |
 | 4.3 TextIndex::search (BM25) | 4.2 | 4.5 | 🟡 |
 | 4.4 rrf_fuse + AdaptiveWeights + SynonymExpander | 3.12 | 4.5 | 🟢 |
-| 4.5 search_hybrid orchestrator | 3.8, 4.3, 4.4 | 4.6, 4.8 | 🟡 |
+| 4.5 search_hybrid orchestrator | 3.8, 4.3, 4.4 | 4.7, 4.8 | 🟡 |
 | 4.6 index_codebase — extend the Phase 3 (vector-only) handler to also write Tantivy BM25 | 3.7c, 4.2 | 4.7 | 🟡 |
-| 4.7 MCP server bootstrap (rmcp 1.7 real handlers) | 1.6, 4.6 | 4.8 | 🟡 |
+| 4.7 MCP server bootstrap (rmcp 1.7 real handlers) | 1.6, 4.5, 4.6 | 4.8 | 🟡 |
 | 4.8 Tool handlers: real search_code + basic get_context_for_prompt (full assembly is Phase 5 / task 5.6) | 4.5, 4.7 | 5.6 | 🟡 |
 
 ### Phase 5 — Context Assembly (task list — per-task files TBD)
@@ -192,10 +192,12 @@ The longest dependency chain (the project bottleneck):
 
 ```
 0.1 → 1.1 → 1.2 → 1.3 → 1.4 → 1.5 → 1.6 → 1.7a → 1.7b → 2.3 → 2.4 → 2.5 → 2.7 → 2.8 → 2.9 →
-3.0 → 3.1 → 3.2 → 3.3 → 3.5 → 3.7b → 3.7c → 3.8 → 3.12 → 4.1 → 4.5 → 5.5 → 5.6 → 5.13 → 6.5
+3.0 → 3.1 → 3.2 → 3.3 → 3.5 → 3.7b → 3.7c → 3.8 → 3.12 → 4.1 → 4.2 → 4.3 → 4.5 → 5.5 → 5.6 → 5.13 → 6.5
 ```
 
 Task 2.7 also waits for `2.1 → 2.2` and `2.3 → 2.6` to join before the dispatcher can land. Everything else parallelizes around those joins.
+
+Phase 4 also has an MCP-serving join: `4.2 → 4.6` and `4.5` both feed `4.7 → 4.8`, and `4.8` joins Phase 5 at `5.6`.
 
 Tasks that can start early (off-critical-path, useful for parallel work):
 - **0.2 / 0.3 / 0.4** after 0.1 lands (independent)

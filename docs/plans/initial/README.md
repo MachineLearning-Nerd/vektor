@@ -24,7 +24,7 @@ This plan covers **Roadmap Stage 2** only (see [`VEKTOR_ROADMAP.md`](../../../VE
 
 ## Phase summaries
 
-Each phase has a `phase-N/README.md` with the full task list. Phases 0, 1, 2, and 3 have task-level files; phases 4–6 currently have task lists only and will be expanded before each phase begins.
+Each phase has a `phase-N/README.md` with the full task list. Phases 0, 1, 2, 3, and 4 have task-level files; phases 5–6 currently have task lists only and will be expanded before each phase begins.
 
 ### Phase 0 — Scaffolding
 **Goal**: `git clone && cargo check` succeeds. No application code yet, but the build pipeline, CI, and pre-commit hooks all work.
@@ -44,7 +44,7 @@ Each phase has a `phase-N/README.md` with the full task list. Phases 0, 1, 2, an
 
 ### Phase 4 — Search + MCP (interim)
 **Goal**: Tantivy BM25 + dense vector search fuse via RRF with adaptive weights. MCP server dispatches `index_codebase`, `search_code`, `get_context_for_prompt` to handlers.
-**Tasks**: ~8 ([`phase-4-search-mcp/README.md`](phase-4-search-mcp/README.md))
+**Tasks**: 8 ([`phase-4-search-mcp/README.md`](phase-4-search-mcp/README.md))
 
 ### Phase 5 — Context Assembly (`v0.4.0`)
 **Goal**: The differentiator. Token-budgeted context packages with deduplication, related-file expansion, query caching, shallow indexing, recency weighting, adaptive hybrid weights.

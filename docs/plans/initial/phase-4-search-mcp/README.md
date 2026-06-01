@@ -19,7 +19,7 @@
 | 4.4 | [`rrf_fuse(semantic, keyword, k)` + `AdaptiveWeights::compute` + `SynonymExpander` (~50 entries)](04-rrf-fuse-adaptive-weights-synonyms.md) | M | 3.12 | ⬜ |
 | 4.5 | [`search_hybrid(query, config)` — tokio::join! of vector + text search → RRF fusion](05-search-hybrid.md) | M | 3.8, 4.3, 4.4 | ⬜ |
 | 4.6 | [`index_codebase` orchestrator — EXTEND the Phase 3 vector-only handler to also write Tantivy BM25 (does not rebuild it)](06-index-codebase-orchestrator.md) | L | 3.7c, 4.2 | ⬜ |
-| 4.7 | [MCP server: replace no-op handlers from task 1.6 with real `search_code` + `index_codebase` dispatch](07-mcp-server-bootstrap.md) | M | 1.6, 4.6 | ⬜ |
+| 4.7 | [MCP server: replace no-op handlers from task 1.6 with real `search_code` + `index_codebase` dispatch](07-mcp-server-bootstrap.md) | M | 1.6, 4.5, 4.6 | ⬜ |
 | 4.8 | [Tool handlers: real `search_code` + basic `get_context_for_prompt` (search → top-k → return without dedup/budget; full assembly is Phase 5)](08-tool-handlers.md) | M | 4.5, 4.7 | ⬜ |
 
 ---
@@ -36,7 +36,7 @@ All must be true before moving to Phase 5:
 - [ ] Synonym expansion: querying `"auth"` finds chunks containing `"authentication"` via BM25 expansion
 - [ ] `get_context_for_prompt` returns a structured `ContextPackage` JSON matching PRD §5.3 (even if budget allocation is naive at this stage)
 - [ ] No regression on Phase 2/3 tests
-- [ ] Search latency <300ms P95 on a 10K-chunk index (no IVF_PQ yet — brute force is fine at this scale)
+- [ ] Search latency <300ms P95 on a 10K-chunk index (task 4.5 owns the deterministic perf smoke; no IVF_PQ yet — brute force is fine at this scale)
 
 **No release tag from this phase.** The next release tag is `v0.4.0` after Phase 5 completes.
 
@@ -44,7 +44,7 @@ All must be true before moving to Phase 5:
 
 ## Notes
 
-- **rmcp 1.7 handler signatures**: task 1.6 already wired the no-op handlers. This phase just replaces the no-op bodies with calls into `search_hybrid` and `assemble_context`. The MCP wiring (tool registration, schema, etc.) doesn't change.
+- **rmcp 1.7 handler signatures**: task 1.6 already wired the no-op handlers. This phase replaces the no-op bodies with calls into `search_hybrid` and the naive Phase 4 context response. Tool names and input schemas stay stable; human-readable descriptions/server instructions should stop advertising no-op `v0.1.0` behavior once the handlers are real.
 - **Tantivy commit semantics**: writes are batched. `add_chunks` doesn't commit immediately; commit only after the orchestrator processes all files (per PRD §4.3 "batch Tantivy commit (once per debounce window, not per file)"). At Phase 4, debounce isn't a thing yet, so commit at end of `index_codebase`.
 - **RRF k constant**: 60 (PRD §4.2 standard).
 - **Synonym map size**: ~50 entries per PRD §4.2 "Static synonym expansion." Don't pad it — small, curated, focused on code concepts.
