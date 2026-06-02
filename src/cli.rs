@@ -217,8 +217,7 @@ impl IndexRunOptions {
     ) -> Self {
         Self {
             force: options.force || !was_text_index_ready,
-            mark_text_index_ready: was_text_index_ready
-                || (is_full_project_run && options.extensions.is_none()),
+            mark_text_index_ready: was_text_index_ready || is_full_project_run,
         }
     }
 }
