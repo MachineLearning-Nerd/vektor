@@ -45,8 +45,12 @@ independently of 4.1–4.3.
   Sum across both lists; sort descending. Ties broken deterministically (e.g. by
   `chunk_id`).
 - **AdaptiveWeights::compute** (PRD §4.2 v2.2.1 density classification — NOT binary):
-  - Count identifier tokens (match `[a-z]+_[a-z]+` snake_case, `[a-z]+[A-Z]`
-    camelCase, or `\w+\.\w+` dotted) among total tokens.
+  - Count identifier tokens among total tokens. Cover the PRD examples and common
+    code identifiers: snake_case (`[A-Za-z]+_[A-Za-z0-9_]+`), camelCase or
+    PascalCase (a token containing an internal uppercase transition, such as
+    `validateToken` or `AuthMiddleware`), dotted paths (`\w+\.\w+`), and
+    acronym-style tokens with optional plural suffixes (`JWT`, `JWTs`,
+    `HTTP2_CONFIG`).
   - density = identifier_tokens / total_tokens.
   - density > 0.60 → `semantic=0.4, keyword=0.6` (e.g. "validate_token AuthMiddleware")
   - density < 0.25 → `semantic=0.7, keyword=0.3` (e.g. "how does authentication work")
@@ -63,6 +67,11 @@ independently of 4.1–4.3.
       `w_sem/(60+1) + w_kw/(60+1)`; a doc in only one list still appears.
 - [ ] `AdaptiveWeights::compute` returns the three documented weight pairs for the
       three documented example queries; weights sum to 1.0.
+- [ ] PascalCase class/type names count as identifiers, so the documented
+      `validate_token AuthMiddleware` example is classified as identifier-heavy.
+- [ ] Acronym-style tokens such as `JWTs` count as identifiers, so the documented
+      `how does validate_token handle expired JWTs` example stays in the mixed
+      bucket instead of falling to natural-language weights.
 - [ ] A single identifier inside a natural-language question does NOT flip weights
       to keyword-heavy (density stays < 0.60) — the v2.2.1 anti-flip property.
 - [ ] `SynonymExpander::expand("auth")` produces an OR query including
@@ -76,6 +85,8 @@ independently of 4.1–4.3.
 cargo build
 cargo test search::rrf::tests
 cargo test search::weights::tests
+cargo test search::weights::tests::pascal_case_counts_as_identifier_token
+cargo test search::weights::tests::acronym_plural_counts_as_identifier_token
 cargo test search::synonyms::tests
 cargo fmt --check
 cargo clippy --workspace --all-targets -- -D warnings

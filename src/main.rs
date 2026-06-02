@@ -9,9 +9,11 @@ mod embedder;
 mod error;
 mod mcp;
 mod models;
+mod search;
 mod secrets;
 mod state;
 mod telemetry;
+mod text_index;
 mod vector_store;
 
 #[tokio::main]

@@ -34,7 +34,9 @@ impl ServerHandler for VektorServer {
         ServerInfo::new(ServerCapabilities::builder().enable_tools().build())
             .with_protocol_version(ProtocolVersion::default())
             .with_server_info(Implementation::new("vektor", env!("CARGO_PKG_VERSION")))
-            .with_instructions("Vektor v0.1.0 exposes no-op skeleton tools only.")
+            .with_instructions(
+                "Vektor exposes tools for indexing and searching local codebases over MCP.",
+            )
     }
 
     fn list_tools(
@@ -56,16 +58,14 @@ impl ServerHandler for VektorServer {
         request: CallToolRequestParams,
         _context: RequestContext<RoleServer>,
     ) -> Result<CallToolResult, ErrorData> {
-        // `index_codebase` is async (builds the embedder + LanceDB store and runs
-        // the shared index core), so the dispatch awaits it. The other tools are
-        // still synchronous no-op skeletons. None of the handlers write to stdout
-        // (the stdio transport owns it); errors surface as JSON in the structured
-        // result rather than as protocol errors.
+        // Handlers never write to stdout (the stdio transport owns it); tool
+        // errors surface as JSON in the structured result rather than as
+        // protocol errors.
         let result: Result<serde_json::Value, ErrorData> = match request.name.as_ref() {
             "index_codebase" => Ok(handlers::handle_index_codebase(request.arguments).await),
-            "search_code" => Ok(handlers::handle_search_code(request.arguments)),
+            "search_code" => Ok(handlers::handle_search_code(request.arguments).await),
             "get_context_for_prompt" => {
-                Ok(handlers::handle_get_context_for_prompt(request.arguments))
+                Ok(handlers::handle_get_context_for_prompt(request.arguments).await)
             }
             other => Err(ErrorData::invalid_params(
                 format!("unknown tool: {other}"),

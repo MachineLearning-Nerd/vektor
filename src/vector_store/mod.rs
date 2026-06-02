@@ -52,6 +52,21 @@ const META_FILE: &str = "vector_meta.json";
 /// Bounds the size of any single in-memory `RecordBatch` for large files.
 const INSERT_BATCH: usize = 500;
 
+fn search_result_projection() -> Select {
+    Select::Columns(vec![
+        "id".to_string(),
+        "content_hash".to_string(),
+        "rel_path".to_string(),
+        "start_line".to_string(),
+        "end_line".to_string(),
+        "symbol_name".to_string(),
+        "symbol_type".to_string(),
+        "language".to_string(),
+        "content".to_string(),
+        "last_modified".to_string(),
+    ])
+}
+
 /// Persisted store metadata. Survives reopen and lets us detect a
 /// dimension/model change that mandates a full re-index.
 ///
@@ -634,6 +649,7 @@ impl VectorStore {
         }
 
         let stream = vq
+            .select(search_result_projection())
             .execute()
             .await
             .map_err(|e| VektorError::Storage(format!("vector search execute failed: {e}")))?;
@@ -642,124 +658,7 @@ impl VectorStore {
             VektorError::Storage(format!("vector search stream collect failed: {e}"))
         })?;
 
-        // --- Extract columns and build SearchResult rows ---
-        let mut results: Vec<SearchResult> = Vec::new();
-        for batch in &batches {
-            let num_rows = batch.num_rows();
-
-            // Helper macro: extract a named column, downcast to the expected type.
-            // Returns a VektorError::Storage on missing column or type mismatch.
-            macro_rules! col_str {
-                ($name:expr) => {{
-                    batch
-                        .column_by_name($name)
-                        .ok_or_else(|| {
-                            VektorError::Storage(format!(
-                                "search result missing column '{}'",
-                                $name
-                            ))
-                        })?
-                        .as_any()
-                        .downcast_ref::<StringArray>()
-                        .ok_or_else(|| {
-                            VektorError::Storage(format!(
-                                "column '{}' is not a Utf8 StringArray",
-                                $name
-                            ))
-                        })?
-                }};
-            }
-            macro_rules! col_u32 {
-                ($name:expr) => {{
-                    batch
-                        .column_by_name($name)
-                        .ok_or_else(|| {
-                            VektorError::Storage(format!(
-                                "search result missing column '{}'",
-                                $name
-                            ))
-                        })?
-                        .as_any()
-                        .downcast_ref::<UInt32Array>()
-                        .ok_or_else(|| {
-                            VektorError::Storage(format!("column '{}' is not a UInt32Array", $name))
-                        })?
-                }};
-            }
-            macro_rules! col_i64 {
-                ($name:expr) => {{
-                    batch
-                        .column_by_name($name)
-                        .ok_or_else(|| {
-                            VektorError::Storage(format!(
-                                "search result missing column '{}'",
-                                $name
-                            ))
-                        })?
-                        .as_any()
-                        .downcast_ref::<Int64Array>()
-                        .ok_or_else(|| {
-                            VektorError::Storage(format!("column '{}' is not an Int64Array", $name))
-                        })?
-                }};
-            }
-            macro_rules! col_f32 {
-                ($name:expr) => {{
-                    batch
-                        .column_by_name($name)
-                        .ok_or_else(|| {
-                            VektorError::Storage(format!(
-                                "search result missing column '{}'",
-                                $name
-                            ))
-                        })?
-                        .as_any()
-                        .downcast_ref::<Float32Array>()
-                        .ok_or_else(|| {
-                            VektorError::Storage(format!(
-                                "column '{}' is not a Float32Array",
-                                $name
-                            ))
-                        })?
-                }};
-            }
-
-            let distances = col_f32!("_distance");
-            let ids = col_str!("id");
-            let content_hashes = col_str!("content_hash");
-            let rel_paths = col_str!("rel_path");
-            let start_lines = col_u32!("start_line");
-            let end_lines = col_u32!("end_line");
-            let symbol_names = col_str!("symbol_name");
-            let symbol_types = col_str!("symbol_type");
-            let languages = col_str!("language");
-            let contents = col_str!("content");
-            let last_modifieds = col_i64!("last_modified");
-
-            for row in 0..num_rows {
-                results.push(SearchResult {
-                    score: distances.value(row),
-                    id: ids.value(row).to_string(),
-                    content_hash: content_hashes.value(row).to_string(),
-                    rel_path: rel_paths.value(row).to_string(),
-                    start_line: start_lines.value(row),
-                    end_line: end_lines.value(row),
-                    symbol_name: if symbol_names.is_null(row) {
-                        None
-                    } else {
-                        Some(symbol_names.value(row).to_string())
-                    },
-                    symbol_type: if symbol_types.is_null(row) {
-                        None
-                    } else {
-                        Some(symbol_types.value(row).to_string())
-                    },
-                    language: languages.value(row).to_string(),
-                    content: contents.value(row).to_string(),
-                    last_modified: last_modifieds.value(row),
-                });
-            }
-        }
+        let mut results = search_results_from_batches(&batches, DistanceColumn::Required)?;
 
         // LanceDB returns rows nearest-first from ANN/flat search.
         // Sort by score ascending (nearest first) to be explicit and robust
@@ -772,6 +671,162 @@ impl VectorStore {
 
         Ok(results)
     }
+
+    /// Hydrate stored chunk rows by chunk id without materializing vectors.
+    ///
+    /// Phase 4 hybrid search uses this to fill `HybridResult.content` for
+    /// keyword-only hits. Tantivy indexes `content` for BM25 but intentionally
+    /// does not store it, so LanceDB remains the full-content source of truth.
+    pub(crate) async fn chunks_by_ids(
+        &self,
+        chunk_ids: &[String],
+    ) -> Result<HashMap<String, SearchResult>> {
+        if chunk_ids.is_empty() {
+            return Ok(HashMap::new());
+        }
+
+        let predicate = chunk_ids
+            .iter()
+            .map(|id| format!("id = '{}'", escape_sql_string_literal(id)))
+            .collect::<Vec<_>>()
+            .join(" OR ");
+
+        let table = self.chunks_table().await?;
+        let stream = table
+            .query()
+            .only_if(predicate)
+            .select(search_result_projection())
+            .execute()
+            .await
+            .map_err(|e| VektorError::Storage(format!("chunk hydration query failed: {e}")))?;
+        let batches: Vec<RecordBatch> = stream.try_collect().await.map_err(|e| {
+            VektorError::Storage(format!("chunk hydration stream collect failed: {e}"))
+        })?;
+        let results = search_results_from_batches(&batches, DistanceColumn::Absent)?;
+
+        Ok(results
+            .into_iter()
+            .map(|result| (result.id.clone(), result))
+            .collect())
+    }
+}
+
+enum DistanceColumn {
+    Required,
+    Absent,
+}
+
+fn search_results_from_batches(
+    batches: &[RecordBatch],
+    distance_column: DistanceColumn,
+) -> Result<Vec<SearchResult>> {
+    let mut results = Vec::new();
+
+    for batch in batches {
+        let num_rows = batch.num_rows();
+
+        // Helper macro: extract a named column, downcast to the expected type.
+        // Returns a VektorError::Storage on missing column or type mismatch.
+        macro_rules! col_str {
+            ($name:expr) => {{
+                batch
+                    .column_by_name($name)
+                    .ok_or_else(|| {
+                        VektorError::Storage(format!("search result missing column '{}'", $name))
+                    })?
+                    .as_any()
+                    .downcast_ref::<StringArray>()
+                    .ok_or_else(|| {
+                        VektorError::Storage(format!(
+                            "column '{}' is not a Utf8 StringArray",
+                            $name
+                        ))
+                    })?
+            }};
+        }
+        macro_rules! col_u32 {
+            ($name:expr) => {{
+                batch
+                    .column_by_name($name)
+                    .ok_or_else(|| {
+                        VektorError::Storage(format!("search result missing column '{}'", $name))
+                    })?
+                    .as_any()
+                    .downcast_ref::<UInt32Array>()
+                    .ok_or_else(|| {
+                        VektorError::Storage(format!("column '{}' is not a UInt32Array", $name))
+                    })?
+            }};
+        }
+        macro_rules! col_i64 {
+            ($name:expr) => {{
+                batch
+                    .column_by_name($name)
+                    .ok_or_else(|| {
+                        VektorError::Storage(format!("search result missing column '{}'", $name))
+                    })?
+                    .as_any()
+                    .downcast_ref::<Int64Array>()
+                    .ok_or_else(|| {
+                        VektorError::Storage(format!("column '{}' is not an Int64Array", $name))
+                    })?
+            }};
+        }
+
+        let distances = match distance_column {
+            DistanceColumn::Required => Some(
+                batch
+                    .column_by_name("_distance")
+                    .ok_or_else(|| {
+                        VektorError::Storage("search result missing column '_distance'".into())
+                    })?
+                    .as_any()
+                    .downcast_ref::<Float32Array>()
+                    .ok_or_else(|| {
+                        VektorError::Storage("column '_distance' is not a Float32Array".into())
+                    })?,
+            ),
+            DistanceColumn::Absent => None,
+        };
+        let ids = col_str!("id");
+        let content_hashes = col_str!("content_hash");
+        let rel_paths = col_str!("rel_path");
+        let start_lines = col_u32!("start_line");
+        let end_lines = col_u32!("end_line");
+        let symbol_names = col_str!("symbol_name");
+        let symbol_types = col_str!("symbol_type");
+        let languages = col_str!("language");
+        let contents = col_str!("content");
+        let last_modifieds = col_i64!("last_modified");
+
+        for row in 0..num_rows {
+            results.push(SearchResult {
+                score: distances
+                    .map(|distances| distances.value(row))
+                    .unwrap_or(0.0),
+                id: ids.value(row).to_string(),
+                content_hash: content_hashes.value(row).to_string(),
+                rel_path: rel_paths.value(row).to_string(),
+                start_line: start_lines.value(row),
+                end_line: end_lines.value(row),
+                symbol_name: if symbol_names.is_null(row) {
+                    None
+                } else {
+                    Some(symbol_names.value(row).to_string())
+                },
+                symbol_type: if symbol_types.is_null(row) {
+                    None
+                } else {
+                    Some(symbol_types.value(row).to_string())
+                },
+                language: languages.value(row).to_string(),
+                content: contents.value(row).to_string(),
+                last_modified: last_modifieds.value(row),
+            });
+        }
+    }
+
+    Ok(results)
 }
 
 // ---------------------------------------------------------------------------
@@ -2393,6 +2448,86 @@ mod tests {
         assert_eq!(r.content, "def my_func(): pass");
         assert_eq!(r.last_modified, 1_234_567_890);
         assert!(r.score >= 0.0, "score must be non-negative");
+    }
+
+    #[tokio::test]
+    async fn search_projection_excludes_vector_column() {
+        let project = tempfile::tempdir().expect("project");
+        let data_dir = tempfile::tempdir().expect("data dir");
+        let mut store = search_store(project.path(), data_dir.path()).await;
+
+        store
+            .insert_chunks(&[search_row(
+                "projection-row",
+                "src/projection.rs",
+                "rust",
+                vec![1.0, 0.0, 0.0, 0.0],
+                Some("projected"),
+                Some("function"),
+            )])
+            .await
+            .expect("seed");
+
+        let table = store.chunks_table().await.expect("open table");
+        let stream = table
+            .query()
+            .nearest_to(&[1.0_f32, 0.0, 0.0, 0.0])
+            .expect("nearest_to")
+            .limit(1)
+            .select(search_result_projection())
+            .execute()
+            .await
+            .expect("execute projection query");
+        let batches: Vec<RecordBatch> = stream.try_collect().await.expect("collect batches");
+        let batch = batches.first().expect("one projected batch");
+
+        assert!(
+            batch.column_by_name("vector").is_none(),
+            "stored vector column must not be materialized on the search hot path"
+        );
+        assert!(
+            batch.column_by_name("_distance").is_some(),
+            "_distance must survive LanceDB scoring auto-projection"
+        );
+        assert!(batch.column_by_name("content").is_some());
+
+        let results = store
+            .search(&[1.0, 0.0, 0.0, 0.0], 1, None)
+            .await
+            .expect("projected search");
+        assert_eq!(results.len(), 1);
+        assert_eq!(results[0].id, "projection-row");
+    }
+
+    #[tokio::test]
+    async fn chunks_by_ids_hydrates_content_without_vector_column() {
+        let project = tempfile::tempdir().expect("project");
+        let data_dir = tempfile::tempdir().expect("data dir");
+        let mut store = search_store(project.path(), data_dir.path()).await;
+        let mut row = search_row(
+            "hydrate-row",
+            "src/hydrate.rs",
+            "rust",
+            vec![1.0, 0.0, 0.0, 0.0],
+            Some("hydrate"),
+            Some("function"),
+        );
+        row.content = "fn hydrate() {}".to_string();
+
+        store.insert_chunks(&[row]).await.expect("seed");
+
+        let rows = store
+            .chunks_by_ids(&["hydrate-row".to_string(), "missing-row".to_string()])
+            .await
+            .expect("hydrate by id");
+
+        assert_eq!(rows.len(), 1);
+        let hydrated = rows.get("hydrate-row").expect("hydrated row");
+        assert_eq!(hydrated.content, "fn hydrate() {}");
+        assert_eq!(hydrated.rel_path, "src/hydrate.rs");
+        assert_eq!(hydrated.symbol_name, Some("hydrate".to_string()));
+        assert_eq!(hydrated.symbol_type, Some("function".to_string()));
+        assert_eq!(hydrated.score, 0.0);
     }
 
     // --- AC: null symbol_name / symbol_type round-trip correctly ---

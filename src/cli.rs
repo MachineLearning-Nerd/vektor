@@ -14,6 +14,7 @@ use crate::{
     error::{Result, VektorError},
     secrets::SecretDetector,
     state::{FileStatus, HashStore, hash_file},
+    text_index::TextIndex,
     vector_store::VectorStore,
 };
 
@@ -158,12 +159,64 @@ async fn run_index(args: IndexArgs, config: &Config) -> Result<()> {
 /// every discovered file is re-chunked/re-indexed regardless of its stored hash
 /// (cached vectors are still reused per-chunk inside [`VectorStore::reindex_file`]).
 pub(crate) async fn index_path(path: &Path, config: &Config, force: bool) -> Result<IndexStats> {
-    let (root, files) = collect_index_files(path, config)?;
+    index_path_with_options(
+        path,
+        config,
+        IndexOptions {
+            force,
+            extensions: None,
+        },
+    )
+    .await
+}
+
+pub(crate) async fn index_path_with_options(
+    path: &Path,
+    config: &Config,
+    options: IndexOptions,
+) -> Result<IndexStats> {
+    let (root, files) = collect_index_files_with_options(path, config, &options)?;
 
     let embedder = build_embedder(config)?;
     let store = VectorStore::new(&root, config, embedder.dim(), embedder.name()).await?;
+    let mut text_index = TextIndex::new(&root, config)?;
 
-    index_path_with_embedder(&root, files, config, embedder.as_ref(), store, force).await
+    index_path_with_embedder(
+        &root,
+        files,
+        config,
+        embedder.as_ref(),
+        store,
+        &mut text_index,
+        options.force,
+    )
+    .await
+}
+
+#[derive(Debug, Clone, Default)]
+pub(crate) struct IndexOptions {
+    pub(crate) force: bool,
+    pub(crate) extensions: Option<Vec<String>>,
+}
+
+pub(crate) trait TextIndexWriter: Send {
+    fn delete_by_file(&mut self, rel_path: &str) -> Result<()>;
+    fn add_chunks(&mut self, chunks: &[Chunk]) -> Result<()>;
+    fn commit(&mut self) -> Result<()>;
+}
+
+impl TextIndexWriter for TextIndex {
+    fn delete_by_file(&mut self, rel_path: &str) -> Result<()> {
+        TextIndex::delete_by_file(self, rel_path)
+    }
+
+    fn add_chunks(&mut self, chunks: &[Chunk]) -> Result<()> {
+        TextIndex::add_chunks(self, chunks)
+    }
+
+    fn commit(&mut self) -> Result<()> {
+        TextIndex::commit(self)
+    }
 }
 
 /// Per-file index orchestration over an already-built embedder + store.
@@ -174,10 +227,10 @@ pub(crate) async fn index_path(path: &Path, config: &Config, force: bool) -> Res
 ///
 /// Preserves the Phase 2 contract:
 /// - `should_skip_file` runs BEFORE any bytes are read (file-level secret gate);
-/// - `HashStore` status order is `Pending` before processing, then `Indexed` on
-///   success or `Failed` on read error;
+/// - `HashStore` status order is `Pending` before processing, then `Indexed`
+///   only after the final Tantivy commit succeeds or `Failed` on per-file error;
 /// - chunks whose content trips `contains_secret` are dropped BEFORE embedding so
-///   secrets never reach the embedder or the vector store.
+///   secrets never reach the embedder, vector store, or Tantivy.
 ///
 /// `pub(crate)`: the MCP handler's integration test drives this directly with a
 /// fake embedder + tempdir store to exercise the full tool flow without a model.
@@ -187,11 +240,13 @@ pub(crate) async fn index_path_with_embedder(
     config: &Config,
     embedder: &dyn Embedder,
     mut store: VectorStore,
+    text_index: &mut dyn TextIndexWriter,
     force: bool,
 ) -> Result<IndexStats> {
     let hash_store = HashStore::open(root, config)?;
     let detector = SecretDetector::new();
     let mut stats = IndexStats::default();
+    let mut processed_files = Vec::new();
 
     for file in files {
         stats.files += 1;
@@ -255,20 +310,81 @@ pub(crate) async fn index_path_with_embedder(
 
         // Delete-then-insert this file's rows; reuse unchanged chunk embeddings.
         let last_modified = file_mtime_secs(&file.path);
-        let reindex = store
+        let reindex = match store
             .reindex_file(&file.rel_path, &safe_chunks, embedder, last_modified)
-            .await?;
+            .await
+        {
+            Ok(reindex) => reindex,
+            Err(error) => {
+                stats.failed += 1;
+                hash_store.set_hash(&file.rel_path, &current_hash, FileStatus::Failed)?;
+                tracing::debug!(
+                    path = %file.path.display(),
+                    error = %error,
+                    "failed to write vector rows during index"
+                );
+                continue;
+            }
+        };
+
+        if let Err(error) = text_index
+            .delete_by_file(&file.rel_path)
+            .and_then(|_| text_index.add_chunks(&safe_chunks))
+        {
+            if let Err(cleanup_error) = text_index.delete_by_file(&file.rel_path) {
+                tracing::debug!(
+                    path = %file.path.display(),
+                    error = %cleanup_error,
+                    "failed to queue Tantivy cleanup after per-file write failure"
+                );
+            }
+            stats.failed += 1;
+            hash_store.set_hash(&file.rel_path, &current_hash, FileStatus::Failed)?;
+            tracing::debug!(
+                path = %file.path.display(),
+                error = %error,
+                "failed to write Tantivy rows during index"
+            );
+            continue;
+        }
+
         stats.chunks += reindex.chunks;
         stats.embeddings += reindex.embedded;
         stats.reused += reindex.reused;
 
         // M-3 decision: a file whose chunks were ALL secret-dropped is still marked
         // Indexed (it was processed, has 0 vectors, won't reprocess until its hash
-        // changes). The dropped count is surfaced via `skipped_secrets`.
-        hash_store.set_hash(&file.rel_path, &current_hash, FileStatus::Indexed)?;
+        // changes). Keep it Pending until the final Tantivy commit succeeds.
+        processed_files.push((file.rel_path, current_hash));
+    }
+
+    text_index.commit()?;
+
+    for (rel_path, hash) in processed_files {
+        hash_store.set_hash(&rel_path, &hash, FileStatus::Indexed)?;
     }
 
     Ok(stats)
+}
+
+fn filter_index_files(files: Vec<IndexFile>, extensions: Option<&[String]>) -> Vec<IndexFile> {
+    let Some(extensions) = extensions else {
+        return files;
+    };
+
+    files
+        .into_iter()
+        .filter(|file| file_matches_extensions(&file.rel_path, extensions))
+        .collect()
+}
+
+fn file_matches_extensions(rel_path: &str, extensions: &[String]) -> bool {
+    let Some(extension) = Path::new(rel_path).extension().and_then(|ext| ext.to_str()) else {
+        return false;
+    };
+    let extension = extension.to_ascii_lowercase();
+
+    extensions.iter().any(|allowed| allowed == &extension)
 }
 
 /// File modification time as Unix seconds; falls back to `0` if unavailable
@@ -377,6 +493,18 @@ pub(crate) fn collect_index_files(
     )))
 }
 
+pub(crate) fn collect_index_files_with_options(
+    input: &Path,
+    config: &crate::config::Config,
+    options: &IndexOptions,
+) -> Result<(PathBuf, Vec<IndexFile>)> {
+    let (root, files) = collect_index_files(input, config)?;
+    Ok((
+        root,
+        filter_index_files(files, options.extensions.as_deref()),
+    ))
+}
+
 fn is_within_size_limit(path: &Path, config: &crate::config::Config) -> Result<bool> {
     let metadata = path.metadata()?;
     let max_size_bytes = config.index.max_file_size_kb.saturating_mul(1024);
@@ -412,7 +540,7 @@ fn normalized_path(path: &Path) -> String {
 #[derive(Debug)]
 pub(crate) struct IndexFile {
     path: PathBuf,
-    rel_path: String,
+    pub(crate) rel_path: String,
 }
 
 /// Run-level index outcome aggregated across all files.
@@ -577,11 +705,31 @@ mod tests {
         let store = VectorStore::new(&collected_root, config, TEST_DIM, TEST_MODEL)
             .await
             .expect("create store");
-        let stats =
-            index_path_with_embedder(&collected_root, files, config, &embedder, store, force)
-                .await
-                .expect("index");
+        let mut text_index =
+            crate::text_index::TextIndex::new(&collected_root, config).expect("create text index");
+        let stats = index_path_with_embedder(
+            &collected_root,
+            files,
+            config,
+            &embedder,
+            store,
+            &mut text_index,
+            force,
+        )
+        .await
+        .expect("index");
         (stats, embedder.texts_embedded())
+    }
+
+    fn tantivy_docs_for_path(root: &Path, config: &Config, rel_path: &str) -> usize {
+        let index = crate::text_index::TextIndex::new(root, config).expect("open text index");
+        let searcher = index.reader().searcher();
+        let term = tantivy::Term::from_field_text(index.fields().rel_path, rel_path);
+        let query = tantivy::query::TermQuery::new(term, tantivy::schema::IndexRecordOption::Basic);
+
+        searcher
+            .search(&query, &tantivy::collector::Count)
+            .expect("count Tantivy docs")
     }
 
     #[tokio::test]
@@ -643,6 +791,60 @@ mod tests {
         assert_eq!(second.embeddings, second_embeds);
     }
 
+    #[tokio::test]
+    async fn index_cli_writes_tantivy_docs_without_duplicates_on_unchanged_run() {
+        let tempdir = tempfile::tempdir().expect("tempdir");
+        let dir = tempdir.path().join("repo");
+        std::fs::create_dir_all(&dir).expect("mkdir repo");
+        std::fs::write(dir.join("lib.rs"), "pub fn hello() -> u32 { 1 }\n").expect("write");
+        let config = config_for(&tempdir.path().join("data"));
+        let dir = dir.as_path();
+
+        let (first, _) = index_with_fake(dir, &config, false).await;
+        let first_docs = tantivy_docs_for_path(dir, &config, "lib.rs");
+        assert_eq!(first_docs, first.chunks);
+
+        let (second, _) = index_with_fake(dir, &config, false).await;
+        let second_docs = tantivy_docs_for_path(dir, &config, "lib.rs");
+        assert_eq!(second.changed, 0);
+        assert_eq!(
+            second_docs, first_docs,
+            "unchanged re-index must not duplicate Tantivy docs"
+        );
+    }
+
+    #[tokio::test]
+    async fn index_cli_changed_file_updates_only_that_files_tantivy_docs() {
+        let tempdir = tempfile::tempdir().expect("tempdir");
+        let dir = tempdir.path().join("repo");
+        std::fs::create_dir_all(&dir).expect("mkdir repo");
+        let changed_file = dir.join("lib.rs");
+        std::fs::write(&changed_file, "pub fn hello() -> u32 { 1 }\n").expect("write lib");
+        std::fs::write(dir.join("other.rs"), "pub fn other() -> u32 { 2 }\n").expect("write other");
+        let config = config_for(&tempdir.path().join("data"));
+        let dir = dir.as_path();
+
+        let (first, _) = index_with_fake(dir, &config, false).await;
+        assert_eq!(first.changed, 2);
+        let other_docs_before = tantivy_docs_for_path(dir, &config, "other.rs");
+        assert!(other_docs_before > 0);
+
+        std::fs::write(&changed_file, "pub fn hello() -> u32 { 999 }\n").expect("rewrite lib");
+        let (second, _) = index_with_fake(dir, &config, false).await;
+
+        assert_eq!(second.changed, 1);
+        assert_eq!(
+            tantivy_docs_for_path(dir, &config, "lib.rs"),
+            second.chunks,
+            "changed file docs should be replaced with the current chunk set"
+        );
+        assert_eq!(
+            tantivy_docs_for_path(dir, &config, "other.rs"),
+            other_docs_before,
+            "unchanged file docs should not be deleted or duplicated"
+        );
+    }
+
     /// `.env` must be skipped at the file level (never read) AND a secret in a
     /// safe-named source file must be dropped at the chunk level before embedding.
     #[tokio::test]
@@ -677,6 +879,11 @@ mod tests {
             hs.get_status(".env").expect("status").is_none(),
             ".env must never be processed"
         );
+        assert_eq!(
+            tantivy_docs_for_path(dir, &config, "notes.txt"),
+            0,
+            "secret-bearing chunks must not be written to Tantivy"
+        );
     }
 
     /// `--dump-chunks` must create NO state.db and NO LanceDB store.
@@ -705,5 +912,84 @@ mod tests {
                     .unwrap_or(true),
             "--dump-chunks must not create any project state or vector storage"
         );
+    }
+
+    mod index_cli {
+        mod tests {
+            use super::super::*;
+
+            struct FailingCommitTextIndex {
+                added_chunks: usize,
+                commits: usize,
+            }
+
+            impl FailingCommitTextIndex {
+                fn new() -> Self {
+                    Self {
+                        added_chunks: 0,
+                        commits: 0,
+                    }
+                }
+            }
+
+            impl TextIndexWriter for FailingCommitTextIndex {
+                fn delete_by_file(&mut self, _rel_path: &str) -> Result<()> {
+                    Ok(())
+                }
+
+                fn add_chunks(&mut self, chunks: &[Chunk]) -> Result<()> {
+                    self.added_chunks += chunks.len();
+                    Ok(())
+                }
+
+                fn commit(&mut self) -> Result<()> {
+                    self.commits += 1;
+                    Err(VektorError::Storage(
+                        "forced Tantivy commit failure".to_string(),
+                    ))
+                }
+            }
+
+            #[tokio::test]
+            async fn tantivy_commit_failure_leaves_files_pending() {
+                let tempdir = tempfile::tempdir().expect("tempdir");
+                let dir = tempdir.path().join("repo");
+                std::fs::create_dir_all(&dir).expect("mkdir repo");
+                std::fs::write(dir.join("lib.rs"), "pub fn hello() -> u32 { 1 }\n").expect("write");
+                let config = config_for(&tempdir.path().join("data"));
+                let (root, files) = collect_index_files(&dir, &config).expect("collect files");
+                let embedder = FakeEmbedder::new();
+                let store = VectorStore::new(&root, &config, TEST_DIM, TEST_MODEL)
+                    .await
+                    .expect("create store");
+                let mut text_index = FailingCommitTextIndex::new();
+
+                let error = index_path_with_embedder(
+                    &root,
+                    files,
+                    &config,
+                    &embedder,
+                    store,
+                    &mut text_index,
+                    false,
+                )
+                .await
+                .expect_err("commit failure should abort the run");
+
+                assert!(
+                    error.to_string().contains("forced Tantivy commit failure"),
+                    "unexpected error: {error}"
+                );
+                assert_eq!(text_index.commits, 1);
+                assert!(text_index.added_chunks > 0);
+
+                let hash_store = HashStore::open(&dir, &config).expect("open hash store");
+                assert_eq!(
+                    hash_store.get_status("lib.rs").expect("status"),
+                    Some(FileStatus::Pending),
+                    "successful per-file writes stay Pending until Tantivy commit succeeds"
+                );
+            }
+        }
     }
 }

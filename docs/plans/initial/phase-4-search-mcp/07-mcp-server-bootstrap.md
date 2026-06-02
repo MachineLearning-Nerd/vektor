@@ -5,7 +5,7 @@
 **PRD reference**: Section 9 (MCP server), Section 12 Week 4 Function 4.7
 **Roadmap stage**: Stage 2 (interim — no release tag)
 **Effort estimate**: M
-**Depends on**: 1.6, 4.6
+**Depends on**: 1.6, 4.5, 4.6
 **Blocks**: 4.8
 
 ## Objective
@@ -33,7 +33,9 @@ constructs the shared state (`VectorStore` + `TextIndex` + `Embedder`) that
   routes to `search_hybrid` (the actual response shaping is task 4.8, but the
   dispatch wiring + state plumbing land here).
 - rmcp tool registration, names, and input schemas are unchanged from 1.6 (only
-  the handler bodies/state change), per the phase README note.
+  the handler bodies/state change), per the phase README note. Update
+  human-readable tool descriptions and server instructions so they no longer say
+  the tools are `v0.1.0` no-ops; those strings are not the input-schema contract.
 - Server still writes nothing to stdout (stdio is the MCP transport); all
   diagnostics via `tracing` to stderr.
 
@@ -41,18 +43,23 @@ constructs the shared state (`VectorStore` + `TextIndex` + `Embedder`) that
 
 - Hold engine state on the rmcp server/tool struct (or an `Arc`-shared context),
   built from the default `Config`. Opening `VectorStore`/`TextIndex` requires a
-  project path; for `search_code` the project is implied by the indexed project
-  dir — resolve it the same way the CLI does.
+  project path; `search_code` receives that path as a required arg (the 1.6 input
+  schema requires `["query", "path"]`), so open the stores for the requested
+  `path` — the same project dir the CLI indexes — rather than inferring a single
+  implicit project.
 - Keep `handle_index_codebase` as-is (it already builds its own embedder + store
   per call via the shared core); `search_code` needs read handles to the already
   built stores, so plumb those.
 - Do not change the tool schema/registration surface (1.6 contract). Replace stub
-  bodies with dispatch + (in 4.8) response shaping.
+  bodies with dispatch + (in 4.8) response shaping. Refresh only descriptions and
+  instructions that currently advertise no-op behavior.
 
 ## Acceptance criteria
 
 - [ ] `vektor serve` starts and advertises the same three tools with the same
-      schemas as task 1.6 (no schema regression).
+      names/input schemas as task 1.6 (no schema regression).
+- [ ] Tool descriptions and server instructions no longer advertise `v0.1.0`
+      no-op behavior after the handlers are real.
 - [ ] `index_codebase` over MCP still returns real stats (Phase 3 + 4.6 behavior).
 - [ ] `search_code` over MCP dispatches into `search_hybrid` (returns real ranked
       results once 4.8 shapes the response — at 4.7, dispatch + state plumbing are
