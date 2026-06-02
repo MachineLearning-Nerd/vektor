@@ -1,8 +1,8 @@
 //! Tantivy full-text index schema and project-scoped open/create.
 //!
-//! This module owns the Phase 4 keyword-search storage contract only:
-//! schema construction, field handles, idempotent index opening, and batched
-//! chunk writes. BM25 querying is handled by later Phase 4 tasks.
+//! This module owns the Phase 4 keyword-search storage contract.
+//! It manages schema construction, field handles, idempotent open/create,
+//! batched chunk writes, and BM25 querying over content with boosted symbols.
 
 use std::{
     fs,
@@ -29,6 +29,8 @@ use crate::{
 };
 
 const TANTIVY_SUBDIR: &str = "tantivy";
+const READY_MARKER_FILE: &str = "vektor_text_index_ready";
+const SEARCHABLE_MARKER_FILE: &str = "vektor_text_index_searchable";
 const EN_STEM_TOKENIZER: &str = "en_stem";
 const TANTIVY_WRITER_HEAP_BYTES: usize = 50 * 1024 * 1024;
 const PHASE_4_INDEX_DEPTH: &str = "deep";
@@ -71,7 +73,7 @@ pub(crate) struct TextIndexFields {
 #[allow(dead_code)]
 pub(crate) struct TextIndex {
     index: Index,
-    writer: IndexWriter<TantivyDocument>,
+    writer: Option<IndexWriter<TantivyDocument>>,
     reader: IndexReader,
     schema: Schema,
     fields: TextIndexFields,
@@ -85,9 +87,32 @@ impl TextIndex {
     /// The index lives at `<data_dir>/<project-hash>/tantivy/`, next to
     /// `VectorStore`'s LanceDB directory and the hash-state database.
     pub(crate) fn new(project_root: &Path, config: &Config) -> Result<Self> {
+        Self::open(project_root, config, true)
+    }
+
+    pub(crate) fn exists(project_root: &Path, config: &Config) -> Result<bool> {
+        let project_dir = project_data_dir(project_root, config)?;
+        Ok(project_dir.join(TANTIVY_SUBDIR).join("meta.json").is_file())
+    }
+
+    /// Open the project-scoped Tantivy index for searching without taking the
+    /// writer lock. MCP search requests use this so they can run while indexing
+    /// owns the single Tantivy writer.
+    pub(crate) fn open_readonly(project_root: &Path, config: &Config) -> Result<Self> {
+        Self::open(project_root, config, false)
+    }
+
+    fn open(project_root: &Path, config: &Config, with_writer: bool) -> Result<Self> {
         let project_dir = project_data_dir(project_root, config)?;
         let tantivy_dir = project_dir.join(TANTIVY_SUBDIR);
-        fs::create_dir_all(&tantivy_dir)?;
+        if with_writer {
+            fs::create_dir_all(&tantivy_dir)?;
+        } else if !tantivy_dir.join("meta.json").is_file() {
+            return Err(VektorError::Storage(format!(
+                "Tantivy text index not found at {}; run `vektor index` first to build keyword search",
+                tantivy_dir.display()
+            )));
+        }
 
         let (schema, fields) = build_schema();
         let directory = MmapDirectory::open(&tantivy_dir).map_err(|error| {
@@ -96,20 +121,35 @@ impl TextIndex {
                 tantivy_dir.display()
             ))
         })?;
-        let index = Index::open_or_create(directory, schema.clone()).map_err(|error| {
-            VektorError::Storage(format!(
-                "failed to open or create Tantivy index {}: {error}",
-                tantivy_dir.display()
-            ))
-        })?;
+        let index = if with_writer {
+            Index::open_or_create(directory, schema.clone()).map_err(|error| {
+                VektorError::Storage(format!(
+                    "failed to open or create Tantivy index {}: {error}",
+                    tantivy_dir.display()
+                ))
+            })?
+        } else {
+            Index::open(directory).map_err(|error| {
+                VektorError::Storage(format!(
+                    "failed to open existing Tantivy index {}: {error}",
+                    tantivy_dir.display()
+                ))
+            })?
+        };
 
         ensure_en_stem_tokenizer(&index)?;
 
-        let writer = index
-            .writer_with_num_threads(1, TANTIVY_WRITER_HEAP_BYTES)
-            .map_err(|error| {
-                tantivy_storage_error("failed to create Tantivy index writer", error)
-            })?;
+        let writer = if with_writer {
+            Some(
+                index
+                    .writer_with_num_threads(1, TANTIVY_WRITER_HEAP_BYTES)
+                    .map_err(|error| {
+                        tantivy_storage_error("failed to create Tantivy index writer", error)
+                    })?,
+            )
+        } else {
+            None
+        };
         let reader = index
             .reader_builder()
             .reload_policy(ReloadPolicy::Manual)
@@ -118,14 +158,22 @@ impl TextIndex {
                 tantivy_storage_error("failed to create Tantivy index reader", error)
             })?;
 
-        Ok(Self {
+        let text_index = Self {
             index,
             writer,
             reader,
             schema,
             fields,
             tantivy_dir,
-        })
+        };
+        if !with_writer && !text_index.is_searchable() {
+            return Err(VektorError::Storage(format!(
+                "Tantivy text index at {} has no committed search state; run `vektor index` first to backfill keyword search",
+                text_index.tantivy_dir.display()
+            )));
+        }
+
+        Ok(text_index)
     }
 
     pub(crate) fn index(&self) -> &Index {
@@ -148,11 +196,24 @@ impl TextIndex {
         &self.tantivy_dir
     }
 
+    pub(crate) fn has_committed_docs(&self) -> bool {
+        self.reader.searcher().num_docs() > 0
+    }
+
+    pub(crate) fn is_ready(&self) -> bool {
+        self.ready_marker_path().is_file()
+    }
+
+    pub(crate) fn is_searchable(&self) -> bool {
+        self.searchable_marker_path().is_file()
+    }
+
     /// Add chunks to the pending Tantivy batch without committing.
     ///
     /// The caller owns chunk-id generation; this method stores `Chunk::id`
     /// directly so Tantivy rows join with the LanceDB rows for the same chunk.
     pub(crate) fn add_chunks(&mut self, chunks: &[Chunk]) -> Result<()> {
+        let fields = self.fields;
         for chunk in chunks {
             let start_line = u64::try_from(chunk.start_line).map_err(|_| {
                 VektorError::Storage(format!(
@@ -172,16 +233,16 @@ impl TextIndex {
                 .map(crate::chunker::Language::as_str)
                 .unwrap_or("unknown");
 
-            self.writer
+            self.writer_mut()?
                 .add_document(doc!(
-                    self.fields.chunk_id => chunk.id.as_str(),
-                    self.fields.rel_path => chunk.rel_path.as_str(),
-                    self.fields.content => chunk.content.as_str(),
-                    self.fields.symbol_name => symbol_name,
-                    self.fields.language => language,
-                    self.fields.start_line => start_line,
-                    self.fields.end_line => end_line,
-                    self.fields.index_depth => PHASE_4_INDEX_DEPTH,
+                    fields.chunk_id => chunk.id.as_str(),
+                    fields.rel_path => chunk.rel_path.as_str(),
+                    fields.content => chunk.content.as_str(),
+                    fields.symbol_name => symbol_name,
+                    fields.language => language,
+                    fields.start_line => start_line,
+                    fields.end_line => end_line,
+                    fields.index_depth => PHASE_4_INDEX_DEPTH,
                 ))
                 .map_err(|error| {
                     tantivy_storage_error(
@@ -196,8 +257,9 @@ impl TextIndex {
 
     /// Queue deletion of all Tantivy docs for an exact repository-relative path.
     pub(crate) fn delete_by_file(&mut self, rel_path: &str) -> Result<()> {
-        self.writer
-            .delete_term(Term::from_field_text(self.fields.rel_path, rel_path));
+        let rel_path_field = self.fields.rel_path;
+        self.writer_mut()?
+            .delete_term(Term::from_field_text(rel_path_field, rel_path));
         Ok(())
     }
 
@@ -245,13 +307,48 @@ impl TextIndex {
 
     /// Commit the pending Tantivy batch and reload the manual reader generation.
     pub(crate) fn commit(&mut self) -> Result<()> {
-        self.writer.commit().map_err(|error| {
+        self.commit_with_ready_marker(true)
+    }
+
+    pub(crate) fn commit_with_ready_marker(&mut self, mark_ready: bool) -> Result<()> {
+        self.writer_mut()?.commit().map_err(|error| {
             tantivy_storage_error("failed to commit Tantivy index batch", error)
         })?;
         self.reader.reload().map_err(|error| {
             tantivy_storage_error("failed to reload Tantivy index reader", error)
         })?;
+        let searchable_marker_path = self.searchable_marker_path();
+        fs::write(&searchable_marker_path, b"phase-4\n").map_err(|error| {
+            VektorError::Storage(format!(
+                "failed to write Tantivy searchable marker {}: {error}",
+                searchable_marker_path.display()
+            ))
+        })?;
+        if !mark_ready {
+            return Ok(());
+        }
+        let ready_marker_path = self.ready_marker_path();
+        fs::write(&ready_marker_path, b"phase-4\n").map_err(|error| {
+            VektorError::Storage(format!(
+                "failed to write Tantivy ready marker {}: {error}",
+                ready_marker_path.display()
+            ))
+        })?;
         Ok(())
+    }
+
+    fn writer_mut(&mut self) -> Result<&mut IndexWriter<TantivyDocument>> {
+        self.writer.as_mut().ok_or_else(|| {
+            VektorError::Storage("Tantivy text index was opened read-only".to_string())
+        })
+    }
+
+    fn ready_marker_path(&self) -> PathBuf {
+        self.tantivy_dir.join(READY_MARKER_FILE)
+    }
+
+    fn searchable_marker_path(&self) -> PathBuf {
+        self.tantivy_dir.join(SEARCHABLE_MARKER_FILE)
     }
 }
 
@@ -515,6 +612,54 @@ mod tests {
         let second = TextIndex::new(project.path(), &config).expect("reopen text index");
         assert_eq!(second.tantivy_dir(), tantivy_dir.as_path());
         assert!(sentinel.is_file(), "reopen must not wipe existing dir");
+    }
+
+    #[test]
+    fn open_readonly_missing_index_errors_without_creating_it() {
+        let project = tempfile::tempdir().expect("project");
+        let data_dir = tempfile::tempdir().expect("data dir");
+        let config = config_with_data_dir(data_dir.path());
+        let tantivy_dir = project_data_dir(project.path(), &config)
+            .expect("project data dir")
+            .join(TANTIVY_SUBDIR);
+
+        let error = match TextIndex::open_readonly(project.path(), &config) {
+            Ok(_) => panic!("read-only open must not create a missing index"),
+            Err(error) => error,
+        };
+
+        assert!(error.to_string().contains("vektor index"), "{error}");
+        assert!(
+            !tantivy_dir.exists(),
+            "read-only search must not create an empty Tantivy directory"
+        );
+    }
+
+    #[test]
+    fn open_readonly_does_not_take_writer_lock() {
+        let project = tempfile::tempdir().expect("project");
+        let data_dir = tempfile::tempdir().expect("data dir");
+        let config = config_with_data_dir(data_dir.path());
+        let mut writer_index = TextIndex::new(project.path(), &config).expect("create writer");
+        writer_index
+            .add_chunks(&[chunk(
+                "chunk-readonly",
+                "src/lib.rs",
+                "pub fn readonly_search_marker() {}",
+                Some("readonly_search_marker"),
+                Some(Language::Rust),
+                1,
+                1,
+            )])
+            .expect("add chunk");
+        writer_index.commit().expect("commit chunk");
+
+        let readonly =
+            TextIndex::open_readonly(project.path(), &config).expect("open while writer exists");
+        let hits = readonly
+            .search("readonly_search_marker", 5)
+            .expect("readonly search");
+        assert_eq!(hit_ids(&hits), ["chunk-readonly"]);
     }
 
     #[test]
