@@ -143,12 +143,59 @@ pub(crate) async fn search_hybrid(
     search_hybrid_with_retrievers(query, config, store, text_index, embedder).await
 }
 
+pub(crate) async fn search_keyword_only(
+    query: &str,
+    config: &HybridSearchConfig,
+    store: &VectorStore,
+    text_index: &TextIndex,
+) -> Result<Vec<HybridResult>> {
+    let mut config = config.clone();
+    config.mode = SearchMode::Keyword;
+    search_hybrid_with_optional_embedder(query, &config, store, text_index, None).await
+}
+
+pub(crate) async fn search_semantic_only(
+    query: &str,
+    config: &HybridSearchConfig,
+    store: &VectorStore,
+    embedder: &dyn Embedder,
+) -> Result<Vec<HybridResult>> {
+    let query = query.trim();
+    if query.is_empty() || config.top_k == 0 {
+        return Ok(Vec::new());
+    }
+
+    let hits = semantic_hits(
+        query,
+        config.top_k,
+        config.filter.as_deref(),
+        store,
+        embedder,
+    )
+    .await?;
+    Ok(hits
+        .into_iter()
+        .take(config.top_k)
+        .map(semantic_result)
+        .collect())
+}
+
 async fn search_hybrid_with_retrievers(
     query: &str,
     config: &HybridSearchConfig,
     semantic: &dyn SemanticRetriever,
     keyword: &dyn KeywordRetriever,
     embedder: &dyn Embedder,
+) -> Result<Vec<HybridResult>> {
+    search_hybrid_with_optional_embedder(query, config, semantic, keyword, Some(embedder)).await
+}
+
+async fn search_hybrid_with_optional_embedder(
+    query: &str,
+    config: &HybridSearchConfig,
+    semantic: &dyn SemanticRetriever,
+    keyword: &dyn KeywordRetriever,
+    embedder: Option<&dyn Embedder>,
 ) -> Result<Vec<HybridResult>> {
     let query = query.trim();
     if query.is_empty() || config.top_k == 0 {
@@ -157,6 +204,7 @@ async fn search_hybrid_with_retrievers(
 
     match config.mode {
         SearchMode::Semantic => {
+            let embedder = required_embedder(embedder)?;
             let hits = semantic_hits(
                 query,
                 config.top_k,
@@ -184,6 +232,7 @@ async fn search_hybrid_with_retrievers(
                 .collect())
         }
         SearchMode::Hybrid => {
+            let embedder = required_embedder(embedder)?;
             let candidate_limit = config.candidate_limit();
             let semantic_future = semantic_hits(
                 query,
@@ -208,6 +257,12 @@ async fn search_hybrid_with_retrievers(
             )
         }
     }
+}
+
+fn required_embedder(embedder: Option<&dyn Embedder>) -> Result<&dyn Embedder> {
+    embedder.ok_or_else(|| {
+        VektorError::Config("semantic or hybrid search requires an embedder".to_string())
+    })
 }
 
 async fn semantic_hits(

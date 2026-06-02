@@ -98,7 +98,7 @@ pub async fn run(cli: Cli) -> Result<()> {
             tracing::info!(%transport, "vektor serve requested");
 
             match transport.as_str() {
-                "stdio" => crate::mcp::start_stdio_server().await,
+                "stdio" => crate::mcp::start_stdio_server(config).await,
                 "sse" => Err(VektorError::NotImplemented(
                     "vektor serve --transport sse (Phase 4)",
                 )),
@@ -176,10 +176,14 @@ pub(crate) async fn index_path_with_options(
     options: IndexOptions,
 ) -> Result<IndexStats> {
     let (root, files) = collect_index_files_with_options(path, config, &options)?;
+    let is_full_project_run = path.is_dir() && options.extensions.is_none();
 
     let embedder = build_embedder(config)?;
     let store = VectorStore::new(&root, config, embedder.dim(), embedder.name()).await?;
     let mut text_index = TextIndex::new(&root, config)?;
+    let was_text_index_ready = text_index.is_ready();
+    let run_options =
+        IndexRunOptions::from_index_options(&options, was_text_index_ready, is_full_project_run);
 
     index_path_with_embedder(
         &root,
@@ -188,7 +192,7 @@ pub(crate) async fn index_path_with_options(
         embedder.as_ref(),
         store,
         &mut text_index,
-        options.force,
+        run_options,
     )
     .await
 }
@@ -199,10 +203,29 @@ pub(crate) struct IndexOptions {
     pub(crate) extensions: Option<Vec<String>>,
 }
 
+#[derive(Debug, Clone, Copy)]
+pub(crate) struct IndexRunOptions {
+    pub(crate) force: bool,
+    pub(crate) mark_text_index_ready: bool,
+}
+
+impl IndexRunOptions {
+    pub(crate) fn from_index_options(
+        options: &IndexOptions,
+        was_text_index_ready: bool,
+        is_full_project_run: bool,
+    ) -> Self {
+        Self {
+            force: options.force || !was_text_index_ready,
+            mark_text_index_ready: was_text_index_ready || is_full_project_run,
+        }
+    }
+}
+
 pub(crate) trait TextIndexWriter: Send {
     fn delete_by_file(&mut self, rel_path: &str) -> Result<()>;
     fn add_chunks(&mut self, chunks: &[Chunk]) -> Result<()>;
-    fn commit(&mut self) -> Result<()>;
+    fn commit(&mut self, mark_ready: bool) -> Result<()>;
 }
 
 impl TextIndexWriter for TextIndex {
@@ -214,8 +237,8 @@ impl TextIndexWriter for TextIndex {
         TextIndex::add_chunks(self, chunks)
     }
 
-    fn commit(&mut self) -> Result<()> {
-        TextIndex::commit(self)
+    fn commit(&mut self, mark_ready: bool) -> Result<()> {
+        TextIndex::commit_with_ready_marker(self, mark_ready)
     }
 }
 
@@ -241,7 +264,7 @@ pub(crate) async fn index_path_with_embedder(
     embedder: &dyn Embedder,
     mut store: VectorStore,
     text_index: &mut dyn TextIndexWriter,
-    force: bool,
+    run_options: IndexRunOptions,
 ) -> Result<IndexStats> {
     let hash_store = HashStore::open(root, config)?;
     let detector = SecretDetector::new();
@@ -264,7 +287,7 @@ pub(crate) async fn index_path_with_embedder(
         let current_hash = hash_file(&file.path)?;
         let stored_hash = hash_store.get_hash(&file.rel_path)?;
         let stored_status = hash_store.get_status(&file.rel_path)?;
-        let should_process = force
+        let should_process = run_options.force
             || stored_hash.as_deref() != Some(current_hash.as_str())
             || stored_status != Some(FileStatus::Indexed);
 
@@ -358,7 +381,7 @@ pub(crate) async fn index_path_with_embedder(
         processed_files.push((file.rel_path, current_hash));
     }
 
-    text_index.commit()?;
+    text_index.commit(run_options.mark_text_index_ready)?;
 
     for (rel_path, hash) in processed_files {
         hash_store.set_hash(&rel_path, &hash, FileStatus::Indexed)?;
@@ -700,13 +723,37 @@ mod tests {
 
     /// Run the shared core against `root` with a freshly built fake embedder + store.
     async fn index_with_fake(root: &Path, config: &Config, force: bool) -> (IndexStats, usize) {
-        let (collected_root, files) = collect_index_files(root, config).expect("collect files");
+        index_with_fake_options(
+            root,
+            config,
+            IndexOptions {
+                force,
+                extensions: None,
+            },
+        )
+        .await
+    }
+
+    async fn index_with_fake_options(
+        root: &Path,
+        config: &Config,
+        options: IndexOptions,
+    ) -> (IndexStats, usize) {
+        let (collected_root, files) =
+            collect_index_files_with_options(root, config, &options).expect("collect files");
         let embedder = FakeEmbedder::new();
         let store = VectorStore::new(&collected_root, config, TEST_DIM, TEST_MODEL)
             .await
             .expect("create store");
         let mut text_index =
             crate::text_index::TextIndex::new(&collected_root, config).expect("create text index");
+        let was_text_index_ready = text_index.is_ready();
+        let is_full_project_run = root.is_dir() && options.extensions.is_none();
+        let run_options = IndexRunOptions::from_index_options(
+            &options,
+            was_text_index_ready,
+            is_full_project_run,
+        );
         let stats = index_path_with_embedder(
             &collected_root,
             files,
@@ -714,7 +761,7 @@ mod tests {
             &embedder,
             store,
             &mut text_index,
-            force,
+            run_options,
         )
         .await
         .expect("index");
@@ -730,6 +777,22 @@ mod tests {
         searcher
             .search(&query, &tantivy::collector::Count)
             .expect("count Tantivy docs")
+    }
+
+    struct NoopTextIndex;
+
+    impl TextIndexWriter for NoopTextIndex {
+        fn delete_by_file(&mut self, _rel_path: &str) -> Result<()> {
+            Ok(())
+        }
+
+        fn add_chunks(&mut self, _chunks: &[Chunk]) -> Result<()> {
+            Ok(())
+        }
+
+        fn commit(&mut self, _mark_ready: bool) -> Result<()> {
+            Ok(())
+        }
     }
 
     #[tokio::test]
@@ -845,6 +908,226 @@ mod tests {
         );
     }
 
+    #[tokio::test]
+    async fn index_cli_backfills_missing_tantivy_for_existing_vector_index() {
+        let tempdir = tempfile::tempdir().expect("tempdir");
+        let dir = tempdir.path().join("repo");
+        std::fs::create_dir_all(&dir).expect("mkdir repo");
+        std::fs::write(dir.join("lib.rs"), "pub fn backfill() -> u32 { 1 }\n").expect("write");
+        let config = config_for(&tempdir.path().join("data"));
+        let dir = dir.as_path();
+
+        let (root, files) = collect_index_files(dir, &config).expect("collect files");
+        let embedder = FakeEmbedder::new();
+        let store = VectorStore::new(&root, &config, TEST_DIM, TEST_MODEL)
+            .await
+            .expect("create store");
+        let mut noop_text_index = NoopTextIndex;
+        let old_stats = index_path_with_embedder(
+            &root,
+            files,
+            &config,
+            &embedder,
+            store,
+            &mut noop_text_index,
+            IndexRunOptions {
+                force: false,
+                mark_text_index_ready: false,
+            },
+        )
+        .await
+        .expect("seed vector-only index");
+        assert_eq!(old_stats.changed, 1);
+        assert_eq!(embedder.texts_embedded(), old_stats.embeddings);
+        assert!(!crate::text_index::TextIndex::exists(dir, &config).expect("text index exists"));
+
+        let (backfill_stats, backfill_embeds) = index_with_fake(dir, &config, false).await;
+
+        assert_eq!(
+            backfill_stats.changed, 1,
+            "missing Tantivy index must invalidate unchanged hash-state rows"
+        );
+        assert_eq!(
+            backfill_embeds, 0,
+            "backfill should reuse existing vectors instead of embedding again"
+        );
+        assert_eq!(
+            tantivy_docs_for_path(dir, &config, "lib.rs"),
+            backfill_stats.chunks
+        );
+    }
+
+    #[tokio::test]
+    async fn index_cli_filtered_backfill_does_not_mark_text_index_globally_ready() {
+        let tempdir = tempfile::tempdir().expect("tempdir");
+        let dir = tempdir.path().join("repo");
+        std::fs::create_dir_all(&dir).expect("mkdir repo");
+        std::fs::write(
+            dir.join("lib.rs"),
+            "pub fn filtered_backfill_rs() -> u32 { 1 }\n",
+        )
+        .expect("write rust");
+        std::fs::write(
+            dir.join("helper.py"),
+            "def filtered_backfill_py():\n    return True\n",
+        )
+        .expect("write python");
+        let config = config_for(&tempdir.path().join("data"));
+        let dir = dir.as_path();
+
+        let (root, files) = collect_index_files(dir, &config).expect("collect files");
+        let embedder = FakeEmbedder::new();
+        let store = VectorStore::new(&root, &config, TEST_DIM, TEST_MODEL)
+            .await
+            .expect("create store");
+        let mut noop_text_index = NoopTextIndex;
+        index_path_with_embedder(
+            &root,
+            files,
+            &config,
+            &embedder,
+            store,
+            &mut noop_text_index,
+            IndexRunOptions {
+                force: false,
+                mark_text_index_ready: false,
+            },
+        )
+        .await
+        .expect("seed vector-only index");
+
+        let (filtered_stats, _) = index_with_fake_options(
+            dir,
+            &config,
+            IndexOptions {
+                force: false,
+                extensions: Some(vec!["rs".to_string()]),
+            },
+        )
+        .await;
+        assert_eq!(filtered_stats.changed, 1);
+        assert!(
+            !crate::text_index::TextIndex::new(dir, &config)
+                .expect("open text index")
+                .is_ready(),
+            "filtered backfill must not claim the full text index is ready"
+        );
+        crate::text_index::TextIndex::open_readonly(dir, &config)
+            .expect("filtered backfill should still be searchable");
+        assert!(tantivy_docs_for_path(dir, &config, "lib.rs") > 0);
+        assert_eq!(tantivy_docs_for_path(dir, &config, "helper.py"), 0);
+
+        let (unfiltered_stats, _) = index_with_fake(dir, &config, false).await;
+
+        assert_eq!(
+            unfiltered_stats.changed, 2,
+            "missing full ready marker must force a complete backfill"
+        );
+        assert!(tantivy_docs_for_path(dir, &config, "helper.py") > 0);
+        assert!(
+            crate::text_index::TextIndex::new(dir, &config)
+                .expect("open text index")
+                .is_ready(),
+            "unfiltered backfill should mark the text index ready"
+        );
+    }
+
+    #[tokio::test]
+    async fn index_cli_direct_file_backfill_does_not_mark_text_index_globally_ready() {
+        let tempdir = tempfile::tempdir().expect("tempdir");
+        let dir = tempdir.path().join("repo");
+        let src = dir.join("src");
+        std::fs::create_dir_all(&src).expect("mkdir src");
+        let lib = src.join("lib.rs");
+        std::fs::write(&lib, "pub fn direct_backfill_lib() -> u32 { 1 }\n").expect("write lib");
+        std::fs::write(
+            src.join("helper.rs"),
+            "pub fn direct_backfill_helper() -> u32 { 2 }\n",
+        )
+        .expect("write helper");
+        let config = config_for(&tempdir.path().join("data"));
+        let src = src.as_path();
+
+        let (root, files) = collect_index_files(src, &config).expect("collect files");
+        let embedder = FakeEmbedder::new();
+        let store = VectorStore::new(&root, &config, TEST_DIM, TEST_MODEL)
+            .await
+            .expect("create store");
+        let mut noop_text_index = NoopTextIndex;
+        index_path_with_embedder(
+            &root,
+            files,
+            &config,
+            &embedder,
+            store,
+            &mut noop_text_index,
+            IndexRunOptions {
+                force: false,
+                mark_text_index_ready: false,
+            },
+        )
+        .await
+        .expect("seed vector-only index");
+
+        let (direct_stats, _) = index_with_fake(&lib, &config, false).await;
+
+        assert_eq!(direct_stats.changed, 1);
+        assert!(
+            !crate::text_index::TextIndex::new(src, &config)
+                .expect("open text index")
+                .is_ready(),
+            "direct-file backfill must not claim the full text index is ready"
+        );
+        crate::text_index::TextIndex::open_readonly(src, &config)
+            .expect("direct-file backfill should still be searchable");
+        assert!(tantivy_docs_for_path(src, &config, "lib.rs") > 0);
+        assert_eq!(tantivy_docs_for_path(src, &config, "helper.rs"), 0);
+
+        let (unfiltered_stats, _) = index_with_fake(src, &config, false).await;
+
+        assert_eq!(
+            unfiltered_stats.changed, 2,
+            "missing full ready marker must force a complete backfill"
+        );
+        assert!(tantivy_docs_for_path(src, &config, "helper.rs") > 0);
+        assert!(
+            crate::text_index::TextIndex::new(src, &config)
+                .expect("open text index")
+                .is_ready(),
+            "full directory backfill should mark the text index ready"
+        );
+    }
+
+    #[tokio::test]
+    async fn index_cli_zero_doc_tantivy_index_does_not_force_every_run() {
+        let tempdir = tempfile::tempdir().expect("tempdir");
+        let dir = tempdir.path().join("repo");
+        std::fs::create_dir_all(&dir).expect("mkdir repo");
+        std::fs::write(
+            dir.join("notes.txt"),
+            "AWS_ACCESS_KEY_ID=AKIAIOSFODNN7EXAMPLE\n",
+        )
+        .expect("write secret-bearing notes");
+        let config = config_for(&tempdir.path().join("data"));
+        let dir = dir.as_path();
+
+        let (first, _) = index_with_fake(dir, &config, false).await;
+        assert_eq!(first.changed, 1);
+        assert!(
+            first.skipped_secrets > 0,
+            "the only file should be processed but all chunks should be dropped"
+        );
+        assert_eq!(
+            tantivy_docs_for_path(dir, &config, "notes.txt"),
+            0,
+            "secret-bearing chunks must not be written to Tantivy"
+        );
+
+        let (second, _) = index_with_fake(dir, &config, false).await;
+        assert_eq!(second.changed, 0);
+        assert_eq!(second.unchanged, 1);
+    }
+
     /// `.env` must be skipped at the file level (never read) AND a secret in a
     /// safe-named source file must be dropped at the chunk level before embedding.
     #[tokio::test]
@@ -942,7 +1225,7 @@ mod tests {
                     Ok(())
                 }
 
-                fn commit(&mut self) -> Result<()> {
+                fn commit(&mut self, _mark_ready: bool) -> Result<()> {
                     self.commits += 1;
                     Err(VektorError::Storage(
                         "forced Tantivy commit failure".to_string(),
@@ -971,7 +1254,10 @@ mod tests {
                     &embedder,
                     store,
                     &mut text_index,
-                    false,
+                    IndexRunOptions {
+                        force: false,
+                        mark_text_index_ready: true,
+                    },
                 )
                 .await
                 .expect_err("commit failure should abort the run");

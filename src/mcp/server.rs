@@ -10,13 +10,21 @@ use rmcp::{
     transport::stdio,
 };
 
-use crate::{error::VektorError, mcp::handlers};
+use crate::{
+    config::Config,
+    error::VektorError,
+    mcp::handlers::{self, EmbedderCache, IndexHealthCache},
+};
 
-pub async fn start_stdio_server() -> crate::error::Result<()> {
-    let service = VektorServer
-        .serve(stdio())
-        .await
-        .map_err(|error| VektorError::Mcp(error.to_string()))?;
+pub async fn start_stdio_server(config: Config) -> crate::error::Result<()> {
+    let service = VektorServer {
+        config,
+        embedder_cache: EmbedderCache::default(),
+        health_cache: IndexHealthCache::default(),
+    }
+    .serve(stdio())
+    .await
+    .map_err(|error| VektorError::Mcp(error.to_string()))?;
 
     service
         .waiting()
@@ -26,8 +34,12 @@ pub async fn start_stdio_server() -> crate::error::Result<()> {
     Ok(())
 }
 
-#[derive(Debug, Clone, Copy)]
-struct VektorServer;
+#[derive(Clone)]
+struct VektorServer {
+    config: Config,
+    embedder_cache: EmbedderCache,
+    health_cache: IndexHealthCache,
+}
 
 impl ServerHandler for VektorServer {
     fn get_info(&self) -> ServerInfo {
@@ -62,11 +74,26 @@ impl ServerHandler for VektorServer {
         // errors surface as JSON in the structured result rather than as
         // protocol errors.
         let result: Result<serde_json::Value, ErrorData> = match request.name.as_ref() {
-            "index_codebase" => Ok(handlers::handle_index_codebase(request.arguments).await),
-            "search_code" => Ok(handlers::handle_search_code(request.arguments).await),
-            "get_context_for_prompt" => {
-                Ok(handlers::handle_get_context_for_prompt(request.arguments).await)
-            }
+            "index_codebase" => Ok(handlers::handle_index_codebase_with_caches(
+                request.arguments,
+                self.config.clone(),
+                self.health_cache.clone(),
+            )
+            .await),
+            "search_code" => Ok(handlers::handle_search_code_with_caches(
+                request.arguments,
+                self.config.clone(),
+                self.embedder_cache.clone(),
+                self.health_cache.clone(),
+            )
+            .await),
+            "get_context_for_prompt" => Ok(handlers::handle_get_context_for_prompt_with_caches(
+                request.arguments,
+                self.config.clone(),
+                self.embedder_cache.clone(),
+                self.health_cache.clone(),
+            )
+            .await),
             other => Err(ErrorData::invalid_params(
                 format!("unknown tool: {other}"),
                 None,

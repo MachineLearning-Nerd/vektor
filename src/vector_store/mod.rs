@@ -264,6 +264,83 @@ impl VectorStore {
         })
     }
 
+    /// Open an existing project-scoped vector store without requiring a live
+    /// embedder. Keyword-only search uses this path because it needs stored chunk
+    /// content for hydration, but it does not embed the query.
+    pub(crate) async fn open_existing(project_root: &Path, config: &Config) -> Result<Self> {
+        let project_dir = project_data_dir(project_root, config)?;
+        let lance_dir = project_dir.join(LANCE_SUBDIR);
+        let meta_path = project_dir.join(META_FILE);
+        let meta = StoreMeta::load(&meta_path)?.ok_or_else(|| {
+            VektorError::Storage(format!(
+                "vector-store metadata not found at {}; run `vektor index` first",
+                meta_path.display()
+            ))
+        })?;
+
+        let lance_uri = lance_dir.to_str().ok_or_else(|| {
+            VektorError::Storage(format!("non-UTF-8 lance path: {}", lance_dir.display()))
+        })?;
+        let conn = connect(lance_uri)
+            .execute()
+            .await
+            .map_err(|e| VektorError::Storage(e.to_string()))?;
+
+        let table_names = conn
+            .table_names()
+            .execute()
+            .await
+            .map_err(|e| VektorError::Storage(e.to_string()))?;
+        if !table_names.iter().any(|name| name == CHUNKS_TABLE) {
+            return Err(VektorError::Storage(format!(
+                "chunks table not found in {}; run `vektor index` first",
+                lance_dir.display()
+            )));
+        }
+
+        Ok(Self {
+            conn,
+            lance_dir,
+            meta_path,
+            meta,
+        })
+    }
+
+    pub(crate) async fn open_existing_for_model(
+        project_root: &Path,
+        config: &Config,
+        dim: usize,
+        model_name: &str,
+    ) -> Result<Self> {
+        let store = Self::open_existing(project_root, config).await?;
+        if store.meta.embedding_dim != dim {
+            return Err(VektorError::Storage(format!(
+                "embedding dimension changed ({} -> {}); re-index required: \
+                 delete {} and run `vektor index` again",
+                store.meta.embedding_dim,
+                dim,
+                store.lance_dir.display(),
+            )));
+        }
+        if store.meta.model_name != model_name {
+            return Err(VektorError::Storage(format!(
+                "embedding model changed ({} -> {}); re-index required: \
+                 delete {} and run `vektor index` again",
+                store.meta.model_name,
+                model_name,
+                store.lance_dir.display(),
+            )));
+        }
+
+        Ok(store)
+    }
+
+    /// Load persisted vector-store metadata without opening LanceDB.
+    pub(crate) fn load_meta(project_root: &Path, config: &Config) -> Result<Option<StoreMeta>> {
+        let project_dir = project_data_dir(project_root, config)?;
+        StoreMeta::load(&project_dir.join(META_FILE))
+    }
+
     /// Persisted metadata for this store.
     ///
     /// `#[allow(dead_code)]`: read by tests and future search/status tasks
