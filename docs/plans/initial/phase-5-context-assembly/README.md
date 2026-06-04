@@ -17,7 +17,7 @@
 | 5.2 | `Deduplicator::deduplicate` — sort by path+line, merge only if >50% overlap (PRD §5.3 v2.2 fix) | M | 4.5 | ⬜ |
 | 5.3 | `RelatedExpander::expand` — chunk-level expansion, tiered scoring (0.6x/0.4x), hub-file skip, expansion caps | L | 4.5 | ⬜ |
 | 5.4 | `QueryCache` — LRU + file-level invalidation (per PRD §5.3 v2.2 fix), 60s TTL | M | 4.5 | ⬜ |
-| 5.5 | `ContextAssembler::assemble` — orchestrate filter → dedup → expand → recency → feedback → budget greedy alloc + two-pass tiktoken verify | L | 5.1, 5.2, 5.3, 5.4 | ⬜ |
+| 5.5 | `ContextAssembler::assemble` — orchestrate filter → dedup → expand → recency → feedback → budget greedy alloc + two-pass tiktoken verify | L | 5.1, 5.2, 5.3, 5.4, 5.9 | ⬜ |
 | 5.6 | `handle_get_context_for_prompt` — replace Phase 4's naive handler with the full assembly pipeline | M | 4.8, 5.5 | ⬜ |
 | 5.7 | `ShallowIndexer::build` — file-walk + Tantivy index from path + first 50 lines + last 20 lines + regex-extracted decls (PRD §4.4) | M | 2.6, 4.1 | ⬜ |
 | 5.8 | `IndexStatusTracker` — project-scoped `IndexPhase` shared state; handlers consult before search | S | 5.7 | ⬜ |

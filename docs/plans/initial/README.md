@@ -18,7 +18,7 @@ This plan covers **Roadmap Stage 2** only (see [`VEKTOR_ROADMAP.md`](../../../VE
 | Phase 5 — Context Assembly | `v0.4.0` | ⬜ Not started | TokenCounter, Deduplicator, RelatedExpander, QueryCache, ShallowIndexer, RecencyTracker. |
 | Phase 6 — Launch Polish | `v0.4.0` | ⬜ Not started | `vektor init`, signed release pipeline, lightweight benchmark gate, `BENCHMARKS.md` baseline. |
 
-**Active phase**: Phase 5 — Context Assembly (`v0.4.0`). Phases 0–4 are complete and merged to main. `v0.3.0` is prepared (private notes-only; tag/publish pending separate authorization); `v0.1.0` and `v0.2.0` are tagged + released (private); the public flip is deferred to launch (`v0.4.0`). Next: expand the [`phase-5-context-assembly/`](phase-5-context-assembly/README.md) task list into per-task files, then execute.
+**Active phase**: Phase 5 — Context Assembly (`v0.4.0`). Phases 0–4 are complete and merged to main. `v0.3.0` is prepared (private notes-only; tag/publish pending separate authorization); `v0.1.0` and `v0.2.0` are tagged + released (private); the public flip is deferred to launch (`v0.4.0`). Next: execute from the [`phase-5-context-assembly/`](phase-5-context-assembly/README.md) task list, starting with 5.1, and keep `DEPENDENCIES.md` in sync.
 
 ---
 
