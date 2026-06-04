@@ -14,11 +14,11 @@ This plan covers **Roadmap Stage 2** only (see [`VEKTOR_ROADMAP.md`](../../../VE
 | Phase 1 — Skeleton | `v0.1.0` | ✅ **Done** — published (private) | Binary entry point, config, error types, CLI, tracing, and no-op MCP handlers implemented. `v0.1.0` tag + GitHub Release exist (private). Repo stays **private until launch (`v0.4.0`)** by decision; the public flip + unauthenticated-install gate are deferred to the launch milestone, not pending. |
 | Phase 2 — Discovery + Chunking | `v0.2.0` | ✅ **Done** — published (private) | File discovery, HashStore, AST/sliding chunking, and Phase 2 `vektor index` behavior, merged to main via PR #1. `v0.2.0` tag + notes-only GitHub Release exist (private). |
 | Phase 3 — Embedding + Storage | `v0.3.0` | ✅ **Done** — prepared (private, notes-only) | ONNX Jina v2 + OpenAI-compatible embedders + factory, LanceDB vector store (schema/cache/reindex/search/delete), content-addressed re-index cache, secret-aware indexing, `vektor models download`, real vector-only `index_codebase` MCP tool. `v0.3.0` version bumped + release notes drafted; tag/publish pending separate human authorization. |
-| Phase 4 — Search + MCP | (interim) | ⬜ Not started | Per-task files written (`01-..08-*.md`). Tantivy BM25, RRF fusion + adaptive weights + synonyms, hybrid search, real MCP tool dispatch for 3 primary tools (4.6 extends the Phase 3 vector-only `index_codebase` to also write Tantivy). |
+| Phase 4 — Search + MCP | (interim) | ✅ **Done** — merged to main | Tantivy BM25 (`TextIndex`), RRF fusion + adaptive weights + synonym expansion, `search_hybrid` (`tokio::join!` + RRF), `index_codebase` extended to write both LanceDB + Tantivy, and real MCP dispatch for the 3 primary tools (`search_code` + naive `get_context_for_prompt`). Merged via PR #4 (`1b39f49`) + review-fix PRs #5/#6. Interim — no release tag (next tag `v0.4.0` after Phase 5). |
 | Phase 5 — Context Assembly | `v0.4.0` | ⬜ Not started | TokenCounter, Deduplicator, RelatedExpander, QueryCache, ShallowIndexer, RecencyTracker. |
 | Phase 6 — Launch Polish | `v0.4.0` | ⬜ Not started | `vektor init`, signed release pipeline, lightweight benchmark gate, `BENCHMARKS.md` baseline. |
 
-**Active phase**: Phase 4 — Search + MCP. Phase 3 is complete and `v0.3.0` is prepared (private notes-only; tag/publish pending separate authorization). `v0.1.0` and `v0.2.0` are tagged + released (private); the public flip is deferred to launch (`v0.4.0`). Start with the lowest-numbered unblocked Phase 4 task from `DEPENDENCIES.md` (4.1 and 4.4 are 🟢).
+**Active phase**: Phase 5 — Context Assembly (`v0.4.0`). Phases 0–4 are complete and merged to main. `v0.3.0` is prepared (private notes-only; tag/publish pending separate authorization); `v0.1.0` and `v0.2.0` are tagged + released (private); the public flip is deferred to launch (`v0.4.0`). Next: expand the [`phase-5-context-assembly/`](phase-5-context-assembly/README.md) task list into per-task files, then execute.
 
 ---
 
@@ -139,7 +139,7 @@ docs/plans/initial/
 
 ## Pre-planned vs just-in-time
 
-Phases 0, 1, 2, 3, and 4 are **planned at the task level**. Phases 2 and 3 are complete (Phase 3 prepared as a private notes-only `v0.3.0`); Phase 4 task files are now the active execution surface.
+Phases 0, 1, 2, 3, and 4 are **planned at the task level** and **complete** (Phases 2/3 published privately as `v0.2.0` / `v0.3.0`-prep; Phase 4 merged to main as an interim phase with no tag). Phase 5 is the active surface.
 
 Phases 5–6 remain **planned at the phase level** with task lists only. Later per-task files are written **just before each phase begins** so that:
 
@@ -147,7 +147,7 @@ Phases 5–6 remain **planned at the phase level** with task lists only. Later p
 2. The plan stays a *tool*, not a stale document
 3. Reviewers can validate the format on Phases 0/1 before we commit to per-task details for all 50+ tasks
 
-The Phase 2 task files were expanded during `1.7a` release prep. The Phase 3 task files were expanded after the private `v0.2.0` publish gate. The Phase 4 task files were expanded by task 3.12 (Phase 3 closure). Phase 5 remains phase-level until task 4.8 expands it.
+The Phase 2 task files were expanded during `1.7a` release prep. The Phase 3 task files were expanded after the private `v0.2.0` publish gate. The Phase 4 task files were expanded by task 3.12 (Phase 3 closure). Phase 5 task files are being expanded now as the Phase 4 closure step (task 4.8's final deliverable).
 
 ---
 
