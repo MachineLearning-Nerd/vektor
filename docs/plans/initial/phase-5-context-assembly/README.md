@@ -5,7 +5,7 @@
 **Roadmap mapping**: Stage 2 / `v0.4.0`
 **PRD mapping**: Section 5 (Context Assembly Layer) in full, Section 12 Functions CA.1–CA.12
 **Effort estimate**: 3–4 weeks of focused part-time work
-**Status**: ⬜ Not started — per-task files NOT yet written (task 4.8 expands them)
+**Status**: ⬜ Implementation not started — **per-task files now written** (`01`–`09`, `12`, `13`; tasks 5.10/5.11 are folded into 4.4 and have no file). Implementation starts from the linked task files.
 
 ---
 
@@ -17,10 +17,10 @@
 | 5.2 | `Deduplicator::deduplicate` — sort by path+line, merge only if >50% overlap (PRD §5.3 v2.2 fix) | M | 4.5 | ⬜ |
 | 5.3 | `RelatedExpander::expand` — chunk-level expansion, tiered scoring (0.6x/0.4x), hub-file skip, expansion caps | L | 4.5 | ⬜ |
 | 5.4 | `QueryCache` — LRU + file-level invalidation (per PRD §5.3 v2.2 fix), 60s TTL | M | 4.5 | ⬜ |
-| 5.5 | `ContextAssembler::assemble` — orchestrate filter → dedup → expand → recency → feedback → budget greedy alloc + two-pass tiktoken verify | L | 5.1, 5.2, 5.3, 5.4 | ⬜ |
+| 5.5 | `ContextAssembler::assemble` — orchestrate filter → dedup → expand → recency → feedback → budget greedy alloc + two-pass tiktoken verify | L | 5.1, 5.2, 5.3, 5.4, 5.9 | ⬜ |
 | 5.6 | `handle_get_context_for_prompt` — replace Phase 4's naive handler with the full assembly pipeline | M | 4.8, 5.5 | ⬜ |
 | 5.7 | `ShallowIndexer::build` — file-walk + Tantivy index from path + first 50 lines + last 20 lines + regex-extracted decls (PRD §4.4) | M | 2.6, 4.1 | ⬜ |
-| 5.8 | `IndexStatusTracker` — `Arc<RwLock<IndexPhase>>` shared state; all handlers consult before search | S | 5.7 | ⬜ |
+| 5.8 | `IndexStatusTracker` — project-scoped `IndexPhase` shared state; handlers consult before search | S | 5.7 | ⬜ |
 | 5.9 | `RecencyTracker::score` — mtime-based, 1.1x at 24h / 1.03x at 7d / 1.0x older, min-score gate >0.3 (PRD §5.5 v2.2 fix) | S | 4.5 | ⬜ |
 | 5.10 | (Folded into 4.4) — `SynonymExpander` static map | — | (done in 4.4) | ⬜ |
 | 5.11 | (Folded into 4.4) — `AdaptiveWeights::compute` density-based selection | — | (done in 4.4) | ⬜ |

@@ -5,7 +5,7 @@
 **Roadmap mapping**: Stage 2 — bridges `v0.3.0` (storage) to `v0.4.0` (full context assembly). **No release tag from this phase alone**; releases happen at the v0.4.0 boundary after Phase 5 lands.
 **PRD mapping**: Sections 4.2, 4.3, 4.5, 4.10, 9, and 12 Week 4 Functions 4.1–4.8, plus CA.10 + CA.11 (synonyms and adaptive weights)
 **Effort estimate**: 2–3 weeks of focused part-time work
-**Status**: ⬜ Not started — per-task files written (expanded by task 3.12). Implementation starts from the linked task files, not from this summary table.
+**Status**: ✅ **Done** — implemented + merged to main (PR #4 `1b39f49`; review-fix PRs #5/#6 `7cfd8e9` / `c0560e3`). All 8 tasks are backed by tests; the modules live in `src/text_index.rs`, `src/search/*`, and `src/mcp/handlers.rs`.
 
 ---
 
@@ -13,14 +13,14 @@
 
 | ID | Task | Effort | Depends on | Status |
 |---|---|---|---|---|
-| 4.1 | [`TextIndex::new(project_dir)` — Tantivy schema per PRD §4.10 (chunk_id / rel_path / content / symbol_name 2.0× boost / language / start_line / end_line / index_depth)](01-text-index-new.md) | M | 3.12 | ⬜ |
-| 4.2 | [`TextIndex::add_chunks(chunks)` — batch insert + commit](02-text-index-add-chunks.md) | S | 4.1 | ⬜ |
-| 4.3 | [`TextIndex::search(query, top_k)` — BM25 with en_stem tokenizer](03-text-index-search.md) | M | 4.2 | ⬜ |
-| 4.4 | [`rrf_fuse(semantic, keyword, k)` + `AdaptiveWeights::compute` + `SynonymExpander` (~50 entries)](04-rrf-fuse-adaptive-weights-synonyms.md) | M | 3.12 | ⬜ |
-| 4.5 | [`search_hybrid(query, config)` — tokio::join! of vector + text search → RRF fusion](05-search-hybrid.md) | M | 3.8, 4.3, 4.4 | ⬜ |
-| 4.6 | [`index_codebase` orchestrator — EXTEND the Phase 3 vector-only handler to also write Tantivy BM25 (does not rebuild it)](06-index-codebase-orchestrator.md) | L | 3.7c, 4.2 | ⬜ |
-| 4.7 | [MCP server: replace no-op handlers from task 1.6 with real `search_code` + `index_codebase` dispatch](07-mcp-server-bootstrap.md) | M | 1.6, 4.5, 4.6 | ⬜ |
-| 4.8 | [Tool handlers: real `search_code` + basic `get_context_for_prompt` (search → top-k → return without dedup/budget; full assembly is Phase 5)](08-tool-handlers.md) | M | 4.5, 4.7 | ⬜ |
+| 4.1 | [`TextIndex::new(project_dir)` — Tantivy schema per PRD §4.10 (chunk_id / rel_path / content / symbol_name 2.0× boost / language / start_line / end_line / index_depth)](01-text-index-new.md) | M | 3.12 | ✅ `1b39f49` |
+| 4.2 | [`TextIndex::add_chunks(chunks)` — batch insert + commit](02-text-index-add-chunks.md) | S | 4.1 | ✅ `1b39f49` |
+| 4.3 | [`TextIndex::search(query, top_k)` — BM25 with en_stem tokenizer](03-text-index-search.md) | M | 4.2 | ✅ `1b39f49` |
+| 4.4 | [`rrf_fuse(semantic, keyword, k)` + `AdaptiveWeights::compute` + `SynonymExpander` (~50 entries)](04-rrf-fuse-adaptive-weights-synonyms.md) | M | 3.12 | ✅ `1b39f49` |
+| 4.5 | [`search_hybrid(query, config)` — tokio::join! of vector + text search → RRF fusion](05-search-hybrid.md) | M | 3.8, 4.3, 4.4 | ✅ `1b39f49` |
+| 4.6 | [`index_codebase` orchestrator — EXTEND the Phase 3 vector-only handler to also write Tantivy BM25 (does not rebuild it)](06-index-codebase-orchestrator.md) | L | 3.7c, 4.2 | ✅ `1b39f49` |
+| 4.7 | [MCP server: replace no-op handlers from task 1.6 with real `search_code` + `index_codebase` dispatch](07-mcp-server-bootstrap.md) | M | 1.6, 4.5, 4.6 | ✅ `1b39f49` |
+| 4.8 | [Tool handlers: real `search_code` + basic `get_context_for_prompt` (search → top-k → return without dedup/budget; full assembly is Phase 5)](08-tool-handlers.md) | M | 4.5, 4.7 | ✅ `1b39f49` |
 
 ---
 
@@ -55,15 +55,21 @@
 
 All must be true before moving to Phase 5:
 
-- [ ] All 8 tasks above marked ✅ Done
-- [ ] `vektor index <repo>` builds both LanceDB AND Tantivy indices in one pass
-- [ ] `vektor serve` + MCP `search_code` call returns real ranked results (not no-op JSON)
-- [ ] Hybrid mode produces different rankings than semantic-only or keyword-only on a known query (verifiable test)
-- [ ] Adaptive weights kick in: identifier-heavy queries (`validate_token AuthMiddleware`) favor BM25; natural-language queries (`how does authentication work`) favor semantic
-- [ ] Synonym expansion: querying `"auth"` finds chunks containing `"authentication"` via BM25 expansion
-- [ ] `get_context_for_prompt` returns a structured `ContextPackage` JSON matching PRD §5.3 (even if budget allocation is naive at this stage)
-- [ ] No regression on Phase 2/3 tests
-- [ ] Search latency <300ms P95 on a 10K-chunk index (task 4.5 owns the deterministic perf smoke; no IVF_PQ yet — brute force is fine at this scale)
+- [x] All 8 tasks above marked ✅ Done
+- [x] `vektor index <repo>` builds both LanceDB AND Tantivy indices in one pass
+- [x] `vektor serve` + MCP `search_code` call returns real ranked results (not no-op JSON)
+- [x] Hybrid mode produces different rankings than semantic-only or keyword-only on a known query (verifiable test)
+- [x] Adaptive weights kick in: identifier-heavy queries (`validate_token AuthMiddleware`) favor BM25; natural-language queries (`how does authentication work`) favor semantic
+- [x] Synonym expansion: querying `"auth"` finds chunks containing `"authentication"` via BM25 expansion
+- [x] `get_context_for_prompt` returns a structured `ContextPackage` JSON matching PRD §5.3 (even if budget allocation is naive at this stage)
+- [x] No regression on Phase 2/3 tests
+- [x] Search latency <300ms P95 on a 10K-chunk index (task 4.5 owns the deterministic perf smoke; no IVF_PQ yet — brute force is fine at this scale)
+
+> ✅ Verified via the test suite (PRs #4/#5/#6, all merged). Model/scale-gated
+> criteria (`vektor index` end-to-end on a real repo, real 10K-chunk latency) are
+> covered by deterministic tests + the `ten_k_chunk_latency_p95_under_300ms` perf
+> smoke and the fake-embedder orchestrator test — mirroring how Phase 3 handled
+> model-dependent criteria. Full local gate (`scripts/ci.sh`) re-run on closure.
 
 **No release tag from this phase.** The next release tag is `v0.4.0` after Phase 5 completes.
 

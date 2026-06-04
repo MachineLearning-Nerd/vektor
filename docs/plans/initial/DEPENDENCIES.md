@@ -142,20 +142,25 @@ Phase 3 is ✅ Done. All embedding/storage tasks landed; `v0.3.0` is prepared as
 | 3.11 `vektor models download` (B6.1) | 3.2 | 3.12 | ✅ `6019ff8` |
 | 3.12 v0.3.0 release | 3.7c, 3.8, 3.10, 3.11 | 4.* | ✅ `(this commit)` |
 
-### Phase 4 — Search + MCP (per-task files written by task 3.12)
+### Phase 4 — Search + MCP ✅ DONE (implemented + merged to main)
 
 | Task | Depends on | Blocks | Status |
 |---|---|---|---|
-| 4.1 TextIndex::new (Tantivy schema) | 3.12 | 4.2 | 🟢 |
-| 4.2 TextIndex::add_chunks | 4.1 | 4.3, 4.6 | 🟡 |
-| 4.3 TextIndex::search (BM25) | 4.2 | 4.5 | 🟡 |
-| 4.4 rrf_fuse + AdaptiveWeights + SynonymExpander | 3.12 | 4.5 | 🟢 |
-| 4.5 search_hybrid orchestrator | 3.8, 4.3, 4.4 | 4.7, 4.8 | 🟡 |
-| 4.6 index_codebase — extend the Phase 3 (vector-only) handler to also write Tantivy BM25 | 3.7c, 4.2 | 4.7 | 🟡 |
-| 4.7 MCP server bootstrap (rmcp 1.7 real handlers) | 1.6, 4.5, 4.6 | 4.8 | 🟡 |
-| 4.8 Tool handlers: real search_code + basic get_context_for_prompt (full assembly is Phase 5 / task 5.6) | 4.5, 4.7 | 5.6 | 🟡 |
+| 4.1 TextIndex::new (Tantivy schema) | 3.12 | 4.2 | ✅ `1b39f49` |
+| 4.2 TextIndex::add_chunks | 4.1 | 4.3, 4.6 | ✅ `1b39f49` |
+| 4.3 TextIndex::search (BM25) | 4.2 | 4.5 | ✅ `1b39f49` |
+| 4.4 rrf_fuse + AdaptiveWeights + SynonymExpander | 3.12 | 4.5 | ✅ `1b39f49` |
+| 4.5 search_hybrid orchestrator | 3.8, 4.3, 4.4 | 4.7, 4.8 | ✅ `1b39f49` |
+| 4.6 index_codebase — extend the Phase 3 (vector-only) handler to also write Tantivy BM25 | 3.7c, 4.2 | 4.7 | ✅ `1b39f49` |
+| 4.7 MCP server bootstrap (rmcp 1.7 real handlers) | 1.6, 4.5, 4.6 | 4.8 | ✅ `1b39f49` |
+| 4.8 Tool handlers: real search_code + basic get_context_for_prompt (full assembly is Phase 5 / task 5.6) | 4.5, 4.7 | 5.6 | ✅ `1b39f49` |
 
-### Phase 5 — Context Assembly (task list — per-task files TBD)
+> Phase 4 shipped as a single implementation commit `1b39f49` (PR #4) rather than
+> per-task commits, plus review-fix PRs #5/#6 (`7cfd8e9`, `c0560e3`). All 8 tasks
+> are backed by tests in `src/search/*`, `src/text_index.rs`, and
+> `src/mcp/handlers.rs` (incl. the `ten_k_chunk_latency_p95_under_300ms` perf smoke).
+
+### Phase 5 — Context Assembly (per-task files written)
 
 | Task | Depends on | Blocks | Status |
 |---|---|---|---|
@@ -163,7 +168,7 @@ Phase 3 is ✅ Done. All embedding/storage tasks landed; `v0.3.0` is prepared as
 | 5.2 Deduplicator (50% overlap threshold) | 4.5 | 5.5 | 🟡 |
 | 5.3 RelatedExpander (chunk-level + tiered + hub-file skip) | 4.5 | 5.5 | 🟡 |
 | 5.4 QueryCache (LRU + file-level invalidation) | 4.5 | 5.5 | 🟡 |
-| 5.5 ContextAssembler orchestrator | 5.1, 5.2, 5.3, 5.4 | 5.6 | 🟡 |
+| 5.5 ContextAssembler orchestrator | 5.1, 5.2, 5.3, 5.4, 5.9 | 5.6 | 🟡 |
 | 5.6 handle_get_context_for_prompt | 4.8, 5.5 | 5.13 | 🟡 |
 | 5.7 ShallowIndexer (two-tier) | 2.6, 4.1 | 5.8 | 🟡 |
 | 5.8 IndexStatusTracker | 5.7 | 5.13 | 🟡 |
