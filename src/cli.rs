@@ -176,14 +176,14 @@ pub(crate) async fn index_path_with_options(
     options: IndexOptions,
 ) -> Result<IndexStats> {
     let (root, files) = collect_index_files_with_options(path, config, &options)?;
-    let is_full_project_run = path.is_dir() && options.extensions.is_none();
+    let is_full_directory_path = path.is_dir() && options.extensions.is_none();
 
     let embedder = build_embedder(config)?;
     let store = VectorStore::new(&root, config, embedder.dim(), embedder.name()).await?;
     let mut text_index = TextIndex::new(&root, config)?;
     let was_text_index_ready = text_index.is_ready();
     let run_options =
-        IndexRunOptions::from_index_options(&options, was_text_index_ready, is_full_project_run);
+        IndexRunOptions::from_index_options(&options, was_text_index_ready, is_full_directory_path);
 
     index_path_with_embedder(
         &root,
@@ -213,11 +213,11 @@ impl IndexRunOptions {
     pub(crate) fn from_index_options(
         options: &IndexOptions,
         was_text_index_ready: bool,
-        is_full_project_run: bool,
+        is_full_directory_path: bool,
     ) -> Self {
         Self {
             force: options.force || !was_text_index_ready,
-            mark_text_index_ready: was_text_index_ready || is_full_project_run,
+            mark_text_index_ready: was_text_index_ready || is_full_directory_path,
         }
     }
 }
@@ -748,11 +748,11 @@ mod tests {
         let mut text_index =
             crate::text_index::TextIndex::new(&collected_root, config).expect("create text index");
         let was_text_index_ready = text_index.is_ready();
-        let is_full_project_run = root.is_dir() && options.extensions.is_none();
+        let is_full_directory_path = root.is_dir() && options.extensions.is_none();
         let run_options = IndexRunOptions::from_index_options(
             &options,
             was_text_index_ready,
-            is_full_project_run,
+            is_full_directory_path,
         );
         let stats = index_path_with_embedder(
             &collected_root,
