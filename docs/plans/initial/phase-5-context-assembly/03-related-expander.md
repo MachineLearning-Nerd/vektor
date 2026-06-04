@@ -21,8 +21,8 @@ waste, and the old 0.3× multiplier got everything filtered out.
 
 - `HybridResult` (`src/search/hybrid.rs`) — the search hits to expand from,
   carrying `chunk_id`, `rel_path`, `content`, `relevance_score`.
-- `VectorStore::search(query_vec, top_k, filter)` (3.8 / 4.5) — reused to score a
-  single file's chunks against the query embedding; pass a `filter` of
+- `VectorStore::search(query_vec, top_k, filter)` (3.8 / 4.5) — an async call used to
+  score a single file's chunks against the query embedding; pass a `filter` of
   `rel_path = '<file>'` to scope the ANN query to one file.
 - The query embedding (the same `Vec<f32>` 4.5 produced; do not re-embed).
 - Import/dependency information per file. The PRD's `deps.db` (Phase 2 / SQLite)
@@ -37,6 +37,8 @@ waste, and the old 0.3× multiplier got everything filtered out.
 - `RelatedExpander::expand(&self, results: &[HybridResult], query_vec: &[f32], store: &VectorStore) -> Result<Vec<ContextChunk>>`
   returning ONLY the newly-added expanded chunks (5.5 merges them with the direct
   hits). Each carries `is_expanded = true` and a tier-scaled `score`.
+- Make `expand` `async`, with signature `async fn expand(...) -> Result<Vec<ContextChunk>>`,
+  since it performs ANN calls to `store.search` per related file.
 - Tiered scoring (v2.2 fix), applied to each expanded chunk's own
   vector-similarity score:
   - **0.6×** — direct imports (files imported by a result) and test files.
@@ -61,7 +63,7 @@ waste, and the old 0.3× multiplier got everything filtered out.
 - Drop any candidate that is already a direct hit, then drop hub files
   (>20 in/out imports). Dedup by `rel_path`, keeping the highest tier seen.
 - Truncate the candidate file list to the 5-file cap (highest tier first).
-- For each surviving file, call `store.search(query_vec, 3, Some("rel_path = '…'"))`
+- For each surviving file, `await store.search(query_vec, 3, Some("rel_path = '…'"))`
   (escape the path the same way `chunks_by_ids` does) to get its top-3 chunks
   *for this query*. Convert each `SearchResult` distance to a similarity the same
   way 4.5 does (`1.0 / (1.0 + distance)`), keep only those > 0.3, then multiply by

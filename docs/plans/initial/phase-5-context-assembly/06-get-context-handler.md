@@ -48,11 +48,17 @@ envelope — but the dedup, related expansion, recency, and token-budget numbers
   1. `parse_context_tool_request` → `ContextToolRequest` (unchanged).
   2. Build `AssemblyConfig` from the request (`token_budget`, `max_files`,
      `include_related`, `min_relevance`, `deduplicate = true`, `include_docs`, `scope`).
-  3. Unless `bypass_cache`: check `QueryCache` for the `(query, mode, project_hash)` key;
-     on hit, set `cache_hit = true` and skip the search.
-  4. On miss: `search_hybrid` (over-fetched candidate pool, scope filter applied), then
-     `ContextAssembler::assemble`. Store the pre-assembly results in the cache.
-  5. Map `ContextPackage` → the §9 JSON envelope:
+  3. Use `project_hash` + `query_text` + `SearchMode` as the cache key, and cache the
+    unfiltered pre-assembly hit pool so `scope`, `include_related`, `min_relevance`,
+    `include_docs`, `max_files`, and `token_budget` can all be applied from the request
+    after the cache hit.
+  4. Unless `bypass_cache`: check `QueryCache` with the chosen key;
+    on hit, set `cache_hit = true` and skip search.
+  5. On miss: `search_hybrid` over a shared candidate pool (unfiltered), then apply
+    request filters (`scope`/`include_docs`/`min_relevance`/`max_files`) and
+    `ContextAssembler::assemble`.
+    - If caching the pre-assembly pool, store only raw hits (not already filtered by scope/min/max).
+  6. Map `ContextPackage` → the §9 JSON envelope:
      - `context[]`: `ContextChunk` → `{ file (rel_path), lines ("start-end"), symbol,
        type, language, relevance (relevance_score), source (search|related|dependency),
        reason, content }`.

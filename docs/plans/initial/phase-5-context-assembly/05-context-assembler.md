@@ -22,6 +22,8 @@ including confidence signaling, budget-gap reason, and directory clusters.
 - `search_hybrid` results as `Vec<HybridResult>` (4.5): each carries `chunk_id`,
   `rel_path`, `start_line`/`end_line`, `symbol_name`, `symbol_type`, `language`,
   `content`, and a higher-is-better `relevance_score`.
+- `HybridResult::last_modified` (must be threaded through from vector search/hybrid),
+  used for recency scoring without disk re-stats.
 - `TokenCounter::estimate` (5.1) — language-specific bytes/N heuristic plus the
   `tiktoken-rs` two-pass precise verification.
 - `Deduplicator::deduplicate` (5.2) — sort by path+line, merge only if >50% overlap.
@@ -43,8 +45,9 @@ including confidence signaling, budget-gap reason, and directory clusters.
   - `ContextPackage { chunks, files_included, total_tokens, budget_used_pct,
     missing_context_warnings, search_metadata, result_confidence, budget_gap_reason,
     suggested_action, clusters }`.
-  - `ContextChunk { content, rel_path, lines, symbol, relevance_score, source, reason }`
-    with `ChunkSource = Search | Related | Dependency`.
+- `ContextChunk { content, rel_path, lines, symbol, relevance_score, source, reason }`
+  with `ChunkSource = Search | Related | Dependency`; include optional
+  `last_modified` metadata for recency propagation and debug fidelity.
   - `enum Confidence { High, Medium, Low }`, `enum GapReason { NoMoreRelevant,
     IndexIncomplete, ThresholdFiltered }`, `struct ResultCluster { path_prefix,
     chunk_count, avg_relevance }`.
@@ -54,23 +57,27 @@ including confidence signaling, budget-gap reason, and directory clusters.
 Implement the PRD §5.4 pipeline in order (search itself happens in the caller; the
 assembler receives the result pool):
 
-1. **Filter (min_relevance):** drop search-origin chunks below `config.min_relevance`.
-   Track whether any chunks were filtered (feeds `ThresholdFiltered`).
-2. **Deduplicate (5.2):** when `config.deduplicate`, merge overlapping chunks (>50%
+1. **Normalize scores before thresholding:** compute normalized relevance
+   (`score / max_raw_score`) so a raw RRF score stream from `search_hybrid` can be
+   compared to `config.min_relevance` meaningfully.
+2. **Filter (min_relevance):** drop search-origin chunks below normalized
+   `config.min_relevance`. Track whether any chunks were filtered (feeds
+   `ThresholdFiltered`).
+3. **Deduplicate (5.2):** when `config.deduplicate`, merge overlapping chunks (>50%
    overlap of the smaller range); keep the higher-scoring chunk, extend the line range.
    Record the dedup count for metadata.
-3. **Expand related (5.3):** when `config.include_related`, call `RelatedExpander::expand`
+4. **Expand related (5.3):** when `config.include_related`, call `RelatedExpander::expand`
    — chunk-level, tiered 0.6x/0.4x, caps + hub-skip enforced inside 5.3. Expanded
    chunks are tagged `source = Related` and are **exempt from min_relevance** (PRD §5.3 v2.2).
-4. **Apply recency (5.9):** `final_score = relevance_score * recency_weight`, with the
+5. **Apply recency (5.9):** `final_score = normalized_relevance * recency_weight`, with the
    >0.3 min-score gate so a recently-edited but irrelevant file does not pollute top-5.
    (Feedback multiplier from PRD §5.4 step 6 is a later task — note it, do not implement.)
-5. **Greedy token-budget allocation with two-pass verify (5.1, PRD §5.4 + §5.3 v2.3):**
+6. **Greedy token-budget allocation with two-pass verify (5.1, PRD §5.4 + §5.3 v2.3):**
    sort by `final_score` desc; greedily include chunks (fast heuristic estimate) until
    ~90% of `token_budget`; then run the precise `tiktoken-rs` count over the assembled
    package — if under, add more chunks; if over, truncate the last chunk to fit (break
    if even a truncated chunk won't fit). Enforce `max_files` distinct files.
-6. **Assemble the `ContextPackage`:** compute `files_included`, `total_tokens` (precise
+7. **Assemble the `ContextPackage`:** compute `files_included`, `total_tokens` (precise
    count), `budget_used_pct`, and the signaling fields below.
 
 Signaling/derived fields:
@@ -94,6 +101,8 @@ NOT re-read from disk (PRD §5.3 Deduplicator point 4). Greedy alloc must stay <
 
 - [ ] `assemble` runs the pipeline in PRD §5.4 order: filter → dedup → expand → recency
       → greedy budget alloc with two-pass `tiktoken-rs` verify.
+- [ ] A raw RRF score stream is normalized before `min_relevance` filtering so phase-4 default scores
+      can still satisfy a default threshold of `0.5`.
 - [ ] Token budget: a `token_budget=8000` request produces a package within ±5% of the
       target (two-pass verification working; the phase exit criterion).
 - [ ] Dedup: a sliding-window fixture with ~80% overlap yields merged chunks; co-located

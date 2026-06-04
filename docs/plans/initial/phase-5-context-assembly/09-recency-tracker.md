@@ -17,9 +17,10 @@ saved but irrelevant file cannot be boosted into the top results.
 
 ## Inputs (must exist before starting)
 
-- A per-chunk `last_modified` Unix-epoch timestamp. This already exists on
-  `VectorStore::SearchResult.last_modified` (`i64`, seconds) and on `HybridResult`'s
-  upstream rows — so the mtime is in hand at ranking time; no extra disk stat.
+- A per-chunk `last_modified` Unix-epoch timestamp available at ranking time. `VectorStore::SearchResult`
+  already carries `last_modified` (`i64`, seconds), but `search_hybrid` currently drops it from
+  `HybridResult` and `KeywordHit` lacks it entirely. Add mtime to the phase-5 handoff objects
+  (or hydrate it from disk when needed) so recency scoring never requires re-statting.
 - The base relevance score to weight — the RRF / hybrid score from 4.5
   (`HybridResult.relevance_score`), higher-is-better.
 - A "now" reference (Unix epoch seconds) — injectable so the boost is testable
@@ -43,6 +44,8 @@ saved but irrelevant file cannot be boosted into the top results.
 - Compute `age = now - mtime` (seconds). Map to a multiplier:
   `age < 86_400` → 1.1; `age < 604_800` → 1.03; else 1.0. Treat a negative age
   (mtime in the future, e.g. clock skew) as "older" → 1.0, never a boost.
+- If `mtime <= 0` / unknown, return the base score unchanged and keep the result out of the
+  boost path.
 - Gate on `base_score > 0.3` before multiplying; at or below the gate, pass the
   base score through untouched.
 - Pure function over `(base_score, mtime, now)` — no I/O. 5.5 calls it inside the
@@ -79,7 +82,8 @@ cargo clippy --workspace --all-targets -- -D warnings
 
 - **mtime source**: PRD §5.5 says when Phase 2 git-blame data is available, use
   the last commit timestamp instead of file mtime for more accurate per-chunk
-  recency. For v0.4.0 use the `last_modified` already stored per chunk in LanceDB;
+  recency. For v0.4.0, hydrate `last_modified` into the phase-5 candidate
+  path from `VectorStore::SearchResult.last_modified` and/or keyword hydration fallback;
   the git-blame upgrade is a later, signature-compatible swap.
 - Keep the tier thresholds as named constants (`SECS_24H`, `SECS_7D`) so the
   values stay auditable against the PRD and are easy to tune.

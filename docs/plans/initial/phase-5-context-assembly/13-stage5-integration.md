@@ -17,14 +17,14 @@ exit criterion: the response is a confidence-signaled, clustered, deduplicated
 `ContextPackage` per PRD §5.3; the token budget lands within ±5% of target via
 two-pass verification; dedup, related expansion, and recency all compose
 correctly; the two-tier index surfaces BM25 results in <5s then flips
-`index_status` partial→full; and the warmed first query completes in <150ms —
+`index_status` partial→full (per indexed project); and the warmed first query completes in <150ms —
 with no regression on Phase 4 search latency.
 
 ## Inputs (must exist before starting)
 
 - `handle_get_context_for_prompt` rebuilt on the full assembly pipeline (5.6 →
   `ContextAssembler::assemble`, 5.5).
-- `IndexStatusTracker` (5.8) shared across handlers.
+- `IndexStatusTracker` (5.8) shared across handlers with per-project index phase state.
 - `WarmUp::run` (5.12) wired into `vektor serve` startup.
 - The component tasks the pipeline composes: `TokenCounter` (5.1),
   `Deduplicator` (5.2), `RelatedExpander` (5.3), `QueryCache` (5.4),
@@ -69,8 +69,8 @@ with no regression on Phase 4 search latency.
   same RRF score (5.9 1.1x@24h boost); a recently-edited *irrelevant* file must
   NOT enter top-5 (the >0.3 min-score gate blocks it).
 - Two-tier: a fresh `vektor index` returns BM25 results in <5s (shallow, 5.7),
-  and `index_status` reads `"partial"` during shallow then flips to `"full"`
-  after deep (5.8). Use a generous time bound for the <5s assertion.
+  and for the indexed project `index_status` reads `"partial"` during shallow then
+  flips to `"full"` after deep (5.8). Use a generous time bound for the <5s assertion.
 - Warm query: after warm-up (5.12), the first query completes in <150ms — assert
   in a model-backed `#[ignore]`d test (the warm path needs the real session).
 - Latency guard: assert no regression versus the Phase 4 search-latency
@@ -88,8 +88,8 @@ with no regression on Phase 4 search latency.
       when one exists.
 - [ ] A recent relevant file outranks an older same-score file; a recent
       irrelevant file is kept out of top-5 by the min-score gate.
-- [ ] Fresh `vektor index` returns BM25 results within 5s; `index_status` reads
-      `"partial"` during shallow and `"full"` after deep.
+- [ ] Fresh `vektor index` returns BM25 results within 5s; for the indexed project
+      `index_status` reads `"partial"` during shallow and `"full"` after deep.
 - [ ] First query after warm-up completes in <150ms (model-backed `#[ignore]`d).
 - [ ] CI green with no Phase 4 search-latency regression.
 - [ ] No `unwrap()` outside `#[cfg(test)]`.

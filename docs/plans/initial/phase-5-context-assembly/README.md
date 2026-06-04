@@ -20,7 +20,7 @@
 | 5.5 | `ContextAssembler::assemble` — orchestrate filter → dedup → expand → recency → feedback → budget greedy alloc + two-pass tiktoken verify | L | 5.1, 5.2, 5.3, 5.4 | ⬜ |
 | 5.6 | `handle_get_context_for_prompt` — replace Phase 4's naive handler with the full assembly pipeline | M | 4.8, 5.5 | ⬜ |
 | 5.7 | `ShallowIndexer::build` — file-walk + Tantivy index from path + first 50 lines + last 20 lines + regex-extracted decls (PRD §4.4) | M | 2.6, 4.1 | ⬜ |
-| 5.8 | `IndexStatusTracker` — `Arc<RwLock<IndexPhase>>` shared state; all handlers consult before search | S | 5.7 | ⬜ |
+| 5.8 | `IndexStatusTracker` — project-scoped `IndexPhase` shared state; handlers consult before search | S | 5.7 | ⬜ |
 | 5.9 | `RecencyTracker::score` — mtime-based, 1.1x at 24h / 1.03x at 7d / 1.0x older, min-score gate >0.3 (PRD §5.5 v2.2 fix) | S | 4.5 | ⬜ |
 | 5.10 | (Folded into 4.4) — `SynonymExpander` static map | — | (done in 4.4) | ⬜ |
 | 5.11 | (Folded into 4.4) — `AdaptiveWeights::compute` density-based selection | — | (done in 4.4) | ⬜ |
