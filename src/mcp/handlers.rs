@@ -1486,11 +1486,11 @@ mod tests {
         let mut text_index =
             crate::text_index::TextIndex::new(&root, &config).map_err(|e| e.to_string())?;
         let was_text_index_ready = text_index.is_ready();
-        let is_full_project_run = Path::new(&path).is_dir() && options.extensions.is_none();
+        let is_full_directory_path = Path::new(&path).is_dir() && options.extensions.is_none();
         let run_options = crate::cli::IndexRunOptions::from_index_options(
             &options,
             was_text_index_ready,
-            is_full_project_run,
+            is_full_directory_path,
         );
 
         crate::cli::index_path_with_embedder(
