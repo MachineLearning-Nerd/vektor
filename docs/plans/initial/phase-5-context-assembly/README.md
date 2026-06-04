@@ -5,7 +5,7 @@
 **Roadmap mapping**: Stage 2 / `v0.4.0`
 **PRD mapping**: Section 5 (Context Assembly Layer) in full, Section 12 Functions CA.1–CA.12
 **Effort estimate**: 3–4 weeks of focused part-time work
-**Status**: ⬜ Not started — per-task files NOT yet written (task 4.8 expands them)
+**Status**: ⬜ Implementation not started — **per-task files now written** (`01`–`09`, `12`, `13`; tasks 5.10/5.11 are folded into 4.4 and have no file). Implementation starts from the linked task files.
 
 ---
 

@@ -24,7 +24,7 @@ This plan covers **Roadmap Stage 2** only (see [`VEKTOR_ROADMAP.md`](../../../VE
 
 ## Phase summaries
 
-Each phase has a `phase-N/README.md` with the full task list. Phases 0, 1, 2, 3, and 4 have task-level files; phases 5–6 currently have task lists only and will be expanded before each phase begins.
+Each phase has a `phase-N/README.md` with the full task list. Phases 0–5 have task-level files; phase 6 currently has a task list only and will be expanded before it begins.
 
 ### Phase 0 — Scaffolding
 **Goal**: `git clone && cargo check` succeeds. No application code yet, but the build pipeline, CI, and pre-commit hooks all work.
@@ -48,7 +48,7 @@ Each phase has a `phase-N/README.md` with the full task list. Phases 0, 1, 2, 3,
 
 ### Phase 5 — Context Assembly (`v0.4.0`)
 **Goal**: The differentiator. Token-budgeted context packages with deduplication, related-file expansion, query caching, shallow indexing, recency weighting, adaptive hybrid weights.
-**Tasks**: ~12 ([`phase-5-context-assembly/README.md`](phase-5-context-assembly/README.md))
+**Tasks**: 13 — 11 with per-task files (`01`–`09`, `12`, `13`); 5.10/5.11 folded into 4.4 ([`phase-5-context-assembly/README.md`](phase-5-context-assembly/README.md))
 
 ### Phase 6 — Launch Polish (`v0.4.0`)
 **Goal**: `vektor init` writes MCP config for Claude Code/Cursor/Codex. Signed release pipeline on tag push. 20-query benchmark vs tokio prints to `BENCHMARKS.md`. Public `v0.4.0` release.
@@ -130,7 +130,18 @@ docs/plans/initial/
 │   ├── 07-mcp-server-bootstrap.md
 │   └── 08-tool-handlers.md
 ├── phase-5-context-assembly/
-│   └── README.md
+│   ├── README.md
+│   ├── 01-token-counter.md
+│   ├── 02-deduplicator.md
+│   ├── 03-related-expander.md
+│   ├── 04-query-cache.md
+│   ├── 05-context-assembler.md
+│   ├── 06-get-context-handler.md
+│   ├── 07-shallow-indexer.md
+│   ├── 08-index-status-tracker.md
+│   ├── 09-recency-tracker.md
+│   ├── 12-warmup.md
+│   └── 13-stage5-integration.md
 └── phase-6-launch-polish/
     └── README.md
 ```
@@ -141,13 +152,13 @@ docs/plans/initial/
 
 Phases 0, 1, 2, 3, and 4 are **planned at the task level** and **complete** (Phases 2/3 published privately as `v0.2.0` / `v0.3.0`-prep; Phase 4 merged to main as an interim phase with no tag). Phase 5 is the active surface.
 
-Phases 5–6 remain **planned at the phase level** with task lists only. Later per-task files are written **just before each phase begins** so that:
+Phase 6 remains **planned at the phase level** with a task list only. Per-task files are written **just before each phase begins** so that:
 
 1. Lessons from earlier phases inform later tasks (we won't pre-write task 5.7 today based on assumptions we'll find wrong in Phase 4)
 2. The plan stays a *tool*, not a stale document
 3. Reviewers can validate the format on Phases 0/1 before we commit to per-task details for all 50+ tasks
 
-The Phase 2 task files were expanded during `1.7a` release prep. The Phase 3 task files were expanded after the private `v0.2.0` publish gate. The Phase 4 task files were expanded by task 3.12 (Phase 3 closure). Phase 5 task files are being expanded now as the Phase 4 closure step (task 4.8's final deliverable).
+The Phase 2 task files were expanded during `1.7a` release prep. The Phase 3 task files were expanded after the private `v0.2.0` publish gate. The Phase 4 task files were expanded by task 3.12 (Phase 3 closure). The Phase 5 task files were expanded as the Phase 4 closure step (task 4.8's final deliverable); Phase 6 remains phase-level until Phase 5 closes.
 
 ---
 
