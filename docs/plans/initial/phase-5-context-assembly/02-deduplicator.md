@@ -72,19 +72,19 @@ Per PRD §5.3 (Deduplicator), in order:
 
 ## Acceptance criteria
 
-- [ ] Two chunks in the same file with **>50% overlap of the smaller** are merged into
+- [x] Two chunks in the same file with **>50% overlap of the smaller** are merged into
       one whose range covers both and whose surviving content/score is the
       higher-scoring chunk's (the Phase 5 exit-criterion: 80%-overlap sliding window →
       merged chunks).
-- [ ] Two co-located chunks with **≤50% overlap of the smaller** are NOT merged (v2.2
+- [x] Two co-located chunks with **≤50% overlap of the smaller** are NOT merged (v2.2
       fix — semantically distinct neighbors survive separately).
-- [ ] Chunks in **different files** are never merged even if line ranges coincide.
-- [ ] A fully-nested chunk is merged into its container (overlap = 100% of smaller).
-- [ ] Adjacent, non-overlapping chunks (`end+1 == start`) are both kept.
-- [ ] No file is re-read from disk during dedup (content sourced from in-memory
+- [x] Chunks in **different files** are never merged even if line ranges coincide.
+- [x] A fully-nested chunk is merged into its container (overlap = 100% of smaller).
+- [x] Adjacent, non-overlapping chunks (`end+1 == start`) are both kept.
+- [x] No file is re-read from disk during dedup (content sourced from in-memory
       results only — assert via a fixture whose paths do not exist on disk).
-- [ ] Empty input → empty output, no panic.
-- [ ] No `unwrap()` outside `#[cfg(test)]`.
+- [x] Empty input → empty output, no panic.
+- [x] No `unwrap()` outside `#[cfg(test)]`.
 
 ## Verification
 

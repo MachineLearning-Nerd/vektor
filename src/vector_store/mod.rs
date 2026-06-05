@@ -350,6 +350,11 @@ impl VectorStore {
         &self.meta
     }
 
+    pub(crate) fn mark_full_index_completed(&mut self, timestamp_secs: i64) -> Result<()> {
+        self.meta.last_full_index_at = Some(timestamp_secs);
+        self.meta.save(&self.meta_path)
+    }
+
     /// Directory holding the LanceDB dataset (`<project-dir>/lance/`).
     ///
     /// `#[allow(dead_code)]`: read by tests; not needed by the index path.

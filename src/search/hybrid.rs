@@ -87,6 +87,7 @@ pub(crate) struct HybridResult {
     pub(crate) relevance_score: f32,
     pub(crate) semantic_score: Option<f32>,
     pub(crate) keyword_score: Option<f32>,
+    pub(crate) last_modified: i64,
 }
 
 #[async_trait::async_trait]
@@ -361,12 +362,16 @@ fn semantic_result(hit: VectorSearchResult) -> HybridResult {
         relevance_score,
         semantic_score: Some(hit.score),
         keyword_score: None,
+        last_modified: hit.last_modified,
     }
 }
 
 fn keyword_result(hit: KeywordHit, hydrated: Option<&VectorSearchResult>) -> HybridResult {
-    let content = hydrated.map(|hit| hit.content.clone()).unwrap_or_default();
+    let content = hydrated
+        .map(|hit| hit.content.clone())
+        .unwrap_or_else(|| hit.content.clone());
     let symbol_type = hydrated.and_then(|hit| hit.symbol_type.clone());
+    let last_modified = hydrated.map(|hit| hit.last_modified).unwrap_or(0);
 
     HybridResult {
         chunk_id: hit.chunk_id,
@@ -380,6 +385,7 @@ fn keyword_result(hit: KeywordHit, hydrated: Option<&VectorSearchResult>) -> Hyb
         relevance_score: hit.score,
         semantic_score: None,
         keyword_score: Some(hit.score),
+        last_modified,
     }
 }
 
@@ -403,6 +409,7 @@ fn merged_result(
             relevance_score,
             semantic_score: Some(hit.score),
             keyword_score: keyword.map(|hit| hit.score),
+            last_modified: hit.last_modified,
         });
     }
 
@@ -419,6 +426,7 @@ fn merged_result(
             relevance_score,
             semantic_score: None,
             keyword_score: keyword.map(|hit| hit.score),
+            last_modified: hit.last_modified,
         });
     }
 
@@ -434,6 +442,7 @@ fn merged_result(
         relevance_score,
         semantic_score: None,
         keyword_score: Some(hit.score),
+        last_modified: 0,
     })
 }
 
@@ -619,6 +628,7 @@ pub mod tests {
         KeywordHit {
             chunk_id: id.to_string(),
             rel_path: format!("src/{id}.rs"),
+            content: format!("keyword content for {id}"),
             score,
             start_line: 1,
             end_line: 5,

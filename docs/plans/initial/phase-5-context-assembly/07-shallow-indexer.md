@@ -77,21 +77,21 @@ tree-sitter chunking + embedding run later. This is the "Phase 1: Shallow Index
 
 ## Acceptance criteria
 
-- [ ] `ShallowIndexer::build` walks a fixture project via `discover_files` and
+- [x] `ShallowIndexer::build` walks a fixture project via `discover_files` and
       writes one shallow Tantivy doc per discovered file.
-- [ ] Shallow content includes the path, first 50 lines, last 20 lines, and at
+- [x] Shallow content includes the path, first 50 lines, last 20 lines, and at
       least the regex-extracted declaration lines of each file.
-- [ ] Files shorter than 70 lines do not duplicate overlapping head/tail lines.
-- [ ] Every shallow doc carries `index_depth = "shallow"`; no shallow doc carries
+- [x] Files shorter than 70 lines do not duplicate overlapping head/tail lines.
+- [x] Every shallow doc carries `index_depth = "shallow"`; no shallow doc carries
       `"deep"`.
-- [ ] After `build`, the Tantivy index is committed once and a keyword query for
+- [x] After `build`, the Tantivy index is committed once and a keyword query for
       a known declaration name returns the matching file (BM25 results available).
-- [ ] On a representative fixture the shallow pass completes well under the 5s
+- [x] On a representative fixture the shallow pass completes well under the 5s
       target (assert via a generous time bound in the test, not a flaky tight one).
-- [ ] A subsequent deep `delete_by_file(rel_path)` removes that file's shallow
+- [x] A subsequent deep `delete_by_file(rel_path)` removes that file's shallow
       docs so shallow and deep tiers never coexist for one file.
-- [ ] An unreadable file is skipped without aborting the pass.
-- [ ] No `unwrap()` outside `#[cfg(test)]`.
+- [x] An unreadable file is skipped without aborting the pass.
+- [x] No `unwrap()` outside `#[cfg(test)]`.
 
 ## Verification
 

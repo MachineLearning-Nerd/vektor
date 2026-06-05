@@ -99,25 +99,25 @@ NOT re-read from disk (PRD §5.3 Deduplicator point 4). Greedy alloc must stay <
 
 ## Acceptance criteria
 
-- [ ] `assemble` runs the pipeline in PRD §5.4 order: filter → dedup → expand → recency
+- [x] `assemble` runs the pipeline in PRD §5.4 order: filter → dedup → expand → recency
       → greedy budget alloc with two-pass `tiktoken-rs` verify.
-- [ ] A raw RRF score stream is normalized before `min_relevance` filtering so phase-4 default scores
+- [x] A raw RRF score stream is normalized before `min_relevance` filtering so phase-4 default scores
       can still satisfy a default threshold of `0.5`.
-- [ ] Token budget: a `token_budget=8000` request produces a package within ±5% of the
+- [x] Token budget: a `token_budget=8000` request produces a package within ±5% of the
       target (two-pass verification working; the phase exit criterion).
-- [ ] Dedup: a sliding-window fixture with ~80% overlap yields merged chunks; co-located
+- [x] Dedup: a sliding-window fixture with ~80% overlap yields merged chunks; co-located
       chunks with <50% overlap are NOT merged.
-- [ ] Related expansion: when `include_related`, expanded chunks appear tagged
+- [x] Related expansion: when `include_related`, expanded chunks appear tagged
       `source = Related`, are exempt from the `min_relevance` floor, and respect the
       5.3 caps (≤5 files, ≤3 chunks/file) and hub-file skip.
-- [ ] Recency: a recently-edited file outranks an older file with the same RRF score,
+- [x] Recency: a recently-edited file outranks an older file with the same RRF score,
       but a recently-edited *irrelevant* file stays out of top-5 (min-score gate >0.3).
-- [ ] `result_confidence` follows the PRD §5.3 heuristic (High/Medium/Low) on known inputs.
-- [ ] `budget_gap_reason` is `None` when budget is fully used; otherwise the correct
+- [x] `result_confidence` follows the PRD §5.3 heuristic (High/Medium/Low) on known inputs.
+- [x] `budget_gap_reason` is `None` when budget is fully used; otherwise the correct
       `NoMoreRelevant` / `IndexIncomplete` / `ThresholdFiltered` variant.
-- [ ] `clusters` groups chunks by directory prefix with `chunk_count` + `avg_relevance`.
-- [ ] `ContextPackage` matches the PRD §5.3 struct (all fields populated, no stubs).
-- [ ] No `unwrap()` outside `#[cfg(test)]`.
+- [x] `clusters` groups chunks by directory prefix with `chunk_count` + `avg_relevance`.
+- [x] `ContextPackage` matches the PRD §5.3 struct (all fields populated, no stubs).
+- [x] No `unwrap()` outside `#[cfg(test)]`.
 
 ## Verification
 

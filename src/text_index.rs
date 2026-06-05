@@ -33,7 +33,8 @@ const READY_MARKER_FILE: &str = "vektor_text_index_ready";
 const SEARCHABLE_MARKER_FILE: &str = "vektor_text_index_searchable";
 const EN_STEM_TOKENIZER: &str = "en_stem";
 const TANTIVY_WRITER_HEAP_BYTES: usize = 50 * 1024 * 1024;
-const PHASE_4_INDEX_DEPTH: &str = "deep";
+pub(crate) const DEEP_INDEX_DEPTH: &str = "deep";
+pub(crate) const SHALLOW_INDEX_DEPTH: &str = "shallow";
 const SYMBOL_NAME_FIELD_BOOST: Score = 2.0;
 
 /// One BM25 keyword hit returned by [`TextIndex::search`].
@@ -45,6 +46,7 @@ const SYMBOL_NAME_FIELD_BOOST: Score = 2.0;
 pub(crate) struct KeywordHit {
     pub(crate) chunk_id: String,
     pub(crate) rel_path: String,
+    pub(crate) content: String,
     pub(crate) score: Score,
     pub(crate) start_line: u64,
     pub(crate) end_line: u64,
@@ -115,20 +117,10 @@ impl TextIndex {
         }
 
         let (schema, fields) = build_schema();
-        let directory = MmapDirectory::open(&tantivy_dir).map_err(|error| {
-            VektorError::Storage(format!(
-                "failed to open Tantivy directory {}: {error}",
-                tantivy_dir.display()
-            ))
-        })?;
         let index = if with_writer {
-            Index::open_or_create(directory, schema.clone()).map_err(|error| {
-                VektorError::Storage(format!(
-                    "failed to open or create Tantivy index {}: {error}",
-                    tantivy_dir.display()
-                ))
-            })?
+            open_or_create_with_schema_rebuild(&tantivy_dir, schema.clone())?
         } else {
+            let directory = open_mmap_directory(&tantivy_dir)?;
             Index::open(directory).map_err(|error| {
                 VektorError::Storage(format!(
                     "failed to open existing Tantivy index {}: {error}",
@@ -213,6 +205,19 @@ impl TextIndex {
     /// The caller owns chunk-id generation; this method stores `Chunk::id`
     /// directly so Tantivy rows join with the LanceDB rows for the same chunk.
     pub(crate) fn add_chunks(&mut self, chunks: &[Chunk]) -> Result<()> {
+        self.add_chunks_with_depth(chunks, DEEP_INDEX_DEPTH)
+    }
+
+    /// Add shallow chunks to the pending Tantivy batch without committing.
+    ///
+    /// Shallow rows are the Phase 5 fast BM25 tier. They intentionally share
+    /// the same file-scoped delete path as deep rows so a later deep index pass
+    /// can replace stale shallow rows atomically for that file.
+    pub(crate) fn add_shallow_chunks(&mut self, chunks: &[Chunk]) -> Result<()> {
+        self.add_chunks_with_depth(chunks, SHALLOW_INDEX_DEPTH)
+    }
+
+    fn add_chunks_with_depth(&mut self, chunks: &[Chunk], index_depth: &str) -> Result<()> {
         let fields = self.fields;
         for chunk in chunks {
             let start_line = u64::try_from(chunk.start_line).map_err(|_| {
@@ -242,7 +247,7 @@ impl TextIndex {
                     fields.language => language,
                     fields.start_line => start_line,
                     fields.end_line => end_line,
-                    fields.index_depth => PHASE_4_INDEX_DEPTH,
+                    fields.index_depth => index_depth,
                 ))
                 .map_err(|error| {
                     tantivy_storage_error(
@@ -352,6 +357,57 @@ impl TextIndex {
     }
 }
 
+fn open_mmap_directory(tantivy_dir: &Path) -> Result<MmapDirectory> {
+    MmapDirectory::open(tantivy_dir).map_err(|error| {
+        VektorError::Storage(format!(
+            "failed to open Tantivy directory {}: {error}",
+            tantivy_dir.display()
+        ))
+    })
+}
+
+fn open_or_create_with_schema_rebuild(tantivy_dir: &Path, schema: Schema) -> Result<Index> {
+    let directory = open_mmap_directory(tantivy_dir)?;
+    match Index::open_or_create(directory, schema.clone()) {
+        Ok(index) => Ok(index),
+        Err(error) if is_tantivy_schema_mismatch(&error) => {
+            tracing::warn!(
+                path = %tantivy_dir.display(),
+                error = %error,
+                "rebuilding Tantivy text index after schema mismatch"
+            );
+            if tantivy_dir.exists() {
+                fs::remove_dir_all(tantivy_dir).map_err(|remove_error| {
+                    VektorError::Storage(format!(
+                        "failed to remove outdated Tantivy index {} after schema mismatch: {remove_error}",
+                        tantivy_dir.display()
+                    ))
+                })?;
+            }
+            fs::create_dir_all(tantivy_dir)?;
+            let directory = open_mmap_directory(tantivy_dir)?;
+            Index::open_or_create(directory, schema).map_err(|create_error| {
+                VektorError::Storage(format!(
+                    "failed to recreate Tantivy index {} after schema mismatch: {create_error}",
+                    tantivy_dir.display()
+                ))
+            })
+        }
+        Err(error) => Err(VektorError::Storage(format!(
+            "failed to open or create Tantivy index {}: {error}",
+            tantivy_dir.display()
+        ))),
+    }
+}
+
+fn is_tantivy_schema_mismatch(error: &tantivy::TantivyError) -> bool {
+    matches!(
+        error,
+        tantivy::TantivyError::SchemaError(message)
+            if message.contains("schema does not match")
+    )
+}
+
 fn keyword_hit_from_doc(
     doc: &TantivyDocument,
     score: Score,
@@ -367,6 +423,7 @@ fn keyword_hit_from_doc(
     Ok(KeywordHit {
         chunk_id: stored_text(doc, fields.chunk_id, "chunk_id")?,
         rel_path: stored_text(doc, fields.rel_path, "rel_path")?,
+        content: stored_text(doc, fields.content, "content")?,
         score,
         start_line: stored_u64(doc, fields.start_line, "start_line")?,
         end_line: stored_u64(doc, fields.end_line, "end_line")?,
@@ -401,7 +458,7 @@ fn build_schema() -> (Schema, TextIndexFields) {
 
     let chunk_id = builder.add_text_field("chunk_id", STORED);
     let rel_path = builder.add_text_field("rel_path", STRING | STORED);
-    let content = builder.add_text_field("content", stemmed_text_options());
+    let content = builder.add_text_field("content", stemmed_text_options().set_stored());
     let symbol_name = builder.add_text_field("symbol_name", stemmed_text_options().set_stored());
     let language = builder.add_text_field("language", STRING | STORED);
     let start_line = builder.add_u64_field("start_line", STORED);
@@ -587,6 +644,21 @@ mod tests {
         }
     }
 
+    fn legacy_schema_without_stored_content() -> Schema {
+        let mut builder = Schema::builder();
+
+        builder.add_text_field("chunk_id", STORED);
+        builder.add_text_field("rel_path", STRING | STORED);
+        builder.add_text_field("content", stemmed_text_options());
+        builder.add_text_field("symbol_name", stemmed_text_options().set_stored());
+        builder.add_text_field("language", STRING | STORED);
+        builder.add_u64_field("start_line", STORED);
+        builder.add_u64_field("end_line", STORED);
+        builder.add_text_field("index_depth", STRING | STORED);
+
+        builder.build()
+    }
+
     #[test]
     fn new_creates_index() {
         let project = tempfile::tempdir().expect("project");
@@ -612,6 +684,39 @@ mod tests {
         let second = TextIndex::new(project.path(), &config).expect("reopen text index");
         assert_eq!(second.tantivy_dir(), tantivy_dir.as_path());
         assert!(sentinel.is_file(), "reopen must not wipe existing dir");
+    }
+
+    #[test]
+    fn new_rebuilds_legacy_schema_mismatch() {
+        let project = tempfile::tempdir().expect("project");
+        let data_dir = tempfile::tempdir().expect("data dir");
+        let config = config_with_data_dir(data_dir.path());
+        let tantivy_dir = project_data_dir(project.path(), &config)
+            .expect("project data dir")
+            .join(TANTIVY_SUBDIR);
+        std::fs::create_dir_all(&tantivy_dir).expect("mkdir tantivy");
+        let legacy_directory = MmapDirectory::open(&tantivy_dir).expect("open legacy directory");
+        Index::open_or_create(legacy_directory, legacy_schema_without_stored_content())
+            .expect("create legacy index");
+
+        let mut index = TextIndex::new(project.path(), &config).expect("rebuild text index");
+        let chunk = chunk(
+            "chunk-1",
+            "src/lib.rs",
+            "pub fn schema_migration_needle() -> bool { true }",
+            Some("schema_migration_needle"),
+            Some(Language::Rust),
+            1,
+            1,
+        );
+        index.add_chunks(&[chunk]).expect("add chunk");
+        index.commit().expect("commit rebuilt index");
+        let hits = index.search("schema_migration_needle", 5).expect("search");
+
+        assert_eq!(
+            hits[0].content,
+            "pub fn schema_migration_needle() -> bool { true }"
+        );
     }
 
     #[test]
@@ -722,7 +827,7 @@ mod tests {
 
         assert_stored_only_text(schema, fields.chunk_id);
         assert_string_field(schema, fields.rel_path);
-        assert_stemmed_text_field(schema, fields.content, false);
+        assert_stemmed_text_field(schema, fields.content, true);
         assert_stemmed_text_field(schema, fields.symbol_name, true);
         assert_string_field(schema, fields.language);
         assert_stored_only_u64(schema, fields.start_line);
@@ -754,14 +859,15 @@ mod tests {
         let fields = fixture.index.fields();
         assert_eq!(text_field(&docs[0], fields.chunk_id), "chunk-a");
         assert_eq!(text_field(&docs[0], fields.rel_path), "src/lib.rs");
+        assert_eq!(
+            text_field(&docs[0], fields.content),
+            "pub fn needle() { println!(\"found\"); }"
+        );
         assert_eq!(text_field(&docs[0], fields.symbol_name), "needle");
         assert_eq!(text_field(&docs[0], fields.language), "rust");
         assert_eq!(u64_field(&docs[0], fields.start_line), 3);
         assert_eq!(u64_field(&docs[0], fields.end_line), 4);
-        assert_eq!(
-            text_field(&docs[0], fields.index_depth),
-            PHASE_4_INDEX_DEPTH
-        );
+        assert_eq!(text_field(&docs[0], fields.index_depth), DEEP_INDEX_DEPTH);
     }
 
     #[test]
@@ -930,6 +1036,7 @@ mod tests {
         assert_eq!(hits[0].end_line, 12);
         assert_eq!(hits[0].symbol_name.as_deref(), Some("boostneedle"));
         assert_eq!(hits[0].language, "rust");
+        assert_eq!(hits[1].content, "boostneedle");
     }
 
     #[test]

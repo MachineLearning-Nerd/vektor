@@ -54,16 +54,16 @@ saved but irrelevant file cannot be boosted into the top results.
 
 ## Acceptance criteria
 
-- [ ] A file modified < 24h ago with `base_score = 0.8` scores `0.8 * 1.1`.
-- [ ] A file modified between 24h and 7d ago gets the 1.03× tier.
-- [ ] A file older than 7d (and a future-dated mtime) gets 1.0× (unchanged).
-- [ ] Min-score gate: `base_score = 0.2` with a < 24h mtime returns `0.2`
+- [x] A file modified < 24h ago with `base_score = 0.8` scores `0.8 * 1.1`.
+- [x] A file modified between 24h and 7d ago gets the 1.03× tier.
+- [x] A file older than 7d (and a future-dated mtime) gets 1.0× (unchanged).
+- [x] Min-score gate: `base_score = 0.2` with a < 24h mtime returns `0.2`
       unchanged — a recently-edited irrelevant file is NOT boosted (phase exit
       criterion: it must not pollute top-5).
-- [ ] Boundary at `base_score == 0.3` is handled per the `> 0.3` rule (0.3 itself
+- [x] Boundary at `base_score == 0.3` is handled per the `> 0.3` rule (0.3 itself
       is not boosted) and is covered by a test.
-- [ ] `score` is pure and deterministic for a fixed `now` (injected clock).
-- [ ] No `unwrap()` outside `#[cfg(test)]`.
+- [x] `score` is pure and deterministic for a fixed `now` (injected clock).
+- [x] No `unwrap()` outside `#[cfg(test)]`.
 
 ## Verification
 

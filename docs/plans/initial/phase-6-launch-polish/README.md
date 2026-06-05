@@ -5,7 +5,7 @@
 **Roadmap mapping**: Stage 2 / `v0.4.0` (the launchable alpha)
 **PRD mapping**: Section 7.7 (`vektor init`), Section 14 Phase 1 Must-Have criteria, plus brought-forward C8.1 (full matrix) + C8.2 (signed binaries) + BM1 (lightweight benchmark)
 **Effort estimate**: 2–3 weeks of focused part-time work
-**Status**: ⬜ Not started — per-task files NOT yet written
+**Status**: ⬜ Not started — per-task files written, implementation not started
 
 ---
 

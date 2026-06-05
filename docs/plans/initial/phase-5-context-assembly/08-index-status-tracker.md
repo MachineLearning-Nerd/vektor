@@ -71,24 +71,24 @@ from on-disk index health at process start, and advanced by the shallow/deep ind
 
 ## Acceptance criteria
 
-- [ ] `IndexPhase` has exactly `Building`, `Partial`, `Full`, mapping to
+- [x] `IndexPhase` has exactly `Building`, `Partial`, `Full`, mapping to
   `"building"`, `"partial"`, `"full"`.
-- [ ] Tracker state is per-project: A change to project B does not change project A status.
-- [ ] On startup, tracker initializes from on-disk state:
+- [x] Tracker state is per-project: A change to project B does not change project A status.
+- [x] On startup, tracker initializes from on-disk state:
   `Full` if both tiers are ready, `Partial` if shallow-only is ready, otherwise `Building`.
-- [ ] A fresh per-project entry reads `Building`; `mark_partial()` then reads `Partial`; `mark_full()`
+- [x] A fresh per-project entry reads `Building`; `mark_partial()` then reads `Partial`; `mark_full()`
   then reads `Full`.
-- [ ] Transitions are forward-only within a pass (`Building→Partial→Full`), with optional explicit
+- [x] Transitions are forward-only within a pass (`Building→Partial→Full`), with optional explicit
   reset to `Building` on re-index start.
-- [ ] With project status `Building`, search returns empty results + index-building message and does
+- [x] With project status `Building`, search returns empty results + index-building message and does
   not load/bind the embedder.
-- [ ] With project status `Partial`, search returns keyword/shallow results and tags
+- [x] With project status `Partial`, search returns keyword/shallow results and tags
   `index_status: "partial"`; with `Full`, returns hybrid and tags `"full"`.
-- [ ] Shallow and deep indexers for the same project drive the shared tracker through
+- [x] Shallow and deep indexers for the same project drive the shared tracker through
   `Building → Partial → Full`.
-- [ ] Search and context handlers for multiple projects each reflect their own project status.
-- [ ] No `RwLock` guard is held across an `.await`.
-- [ ] No `unwrap()` outside `#[cfg(test)]`.
+- [x] Search and context handlers for multiple projects each reflect their own project status.
+- [x] No `RwLock` guard is held across an `.await`.
+- [x] No `unwrap()` outside `#[cfg(test)]`.
 
 ## Verification
 

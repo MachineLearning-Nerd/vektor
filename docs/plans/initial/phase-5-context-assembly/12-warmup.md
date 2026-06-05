@@ -64,18 +64,18 @@ allocation.
 
 ## Acceptance criteria
 
-- [ ] `WarmUp::run` embeds a 1-element batch AND a 32-element batch (both code
+- [x] `WarmUp::run` embeds a 1-element batch AND a 32-element batch (both code
       paths primed) using the `Embedder` trait.
-- [ ] Warm-up uses the document embedding path so the prefix is applied (no
+- [x] Warm-up uses the document embedding path so the prefix is applied (no
       first-query prefix cold path).
-- [ ] Warm-up vectors are discarded; no state leaks into the index.
-- [ ] A warm-up failure returns an `Err` and aborts startup (fail fast), and is
+- [x] Warm-up vectors are discarded; no state leaks into the index.
+- [x] A warm-up failure returns an `Err` and aborts startup (fail fast), and is
       logged via `tracing` to stderr — nothing on stdout.
-- [ ] The `vektor serve` startup invokes `WarmUp::run` after the embedder is
+- [x] The `vektor serve` startup invokes `WarmUp::run` after the embedder is
       built and before serving queries (per the eager path in 4.7).
-- [ ] A unit test drives `WarmUp::run` with a fake embedder and asserts both a
+- [x] A unit test drives `WarmUp::run` with a fake embedder and asserts both a
       length-1 and a length-32 batch reached the backend.
-- [ ] No `unwrap()` outside `#[cfg(test)]`.
+- [x] No `unwrap()` outside `#[cfg(test)]`.
 
 ## Verification
 

@@ -68,18 +68,18 @@ package and corrects over/under-fill.
 
 ## Acceptance criteria
 
-- [ ] `estimate` returns language-differentiated counts: the same byte string
+- [x] `estimate` returns language-differentiated counts: the same byte string
       estimates fewer tokens for `"rust"` (÷4.2) than for `"python"` (÷3.5), and docs
       (`"markdown"`, ÷4.8) lower still.
-- [ ] Unknown / empty language string falls back to the `3.8` default ratio.
-- [ ] `estimate` never returns 0 for non-empty input (uses `div_ceil`/`ceil`); empty
+- [x] Unknown / empty language string falls back to the `3.8` default ratio.
+- [x] `estimate` never returns 0 for non-empty input (uses `div_ceil`/`ceil`); empty
       input returns 0.
-- [ ] `count_exact` agrees with a known `tiktoken-rs` (`cl100k_base`) token count for
+- [x] `count_exact` agrees with a known `tiktoken-rs` (`cl100k_base`) token count for
       a fixed sample string (golden test against the encoder, not against the heuristic).
-- [ ] The tiktoken encoder is constructed once (cached), verified by it being a
+- [x] The tiktoken encoder is constructed once (cached), verified by it being a
       `OnceLock`/`OnceCell` (or equivalent) and not re-instantiated per call.
-- [ ] `count_exact` uses the existing `tiktoken-rs` dependency (`Cargo.toml`) — no new dependency added.
-- [ ] No `unwrap()` outside `#[cfg(test)]`.
+- [x] `count_exact` uses the existing `tiktoken-rs` dependency (`Cargo.toml`) — no new dependency added.
+- [x] No `unwrap()` outside `#[cfg(test)]`.
 
 ## Verification
 

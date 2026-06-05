@@ -73,20 +73,20 @@ waste, and the old 0.3× multiplier got everything filtered out.
 
 ## Acceptance criteria
 
-- [ ] A query hitting `src/auth/jwt.py` includes chunks from a matching
+- [x] A query hitting `src/auth/jwt.py` includes chunks from a matching
       `tests/test_auth.py` (phase exit criterion) at the 0.6× tier.
-- [ ] Reverse-import and sibling-barrel candidates are scored at 0.4×; direct
+- [x] Reverse-import and sibling-barrel candidates are scored at 0.4×; direct
       imports and test files at 0.6×.
-- [ ] Expanded chunks carry `is_expanded = true` and are NOT dropped by a
+- [x] Expanded chunks carry `is_expanded = true` and are NOT dropped by a
       `min_relevance` filter that would remove an equally-scored direct hit.
-- [ ] Chunk-level: a related file with one relevant chunk and many irrelevant
+- [x] Chunk-level: a related file with one relevant chunk and many irrelevant
       ones contributes only the chunk(s) scoring > 0.3, never the whole file.
-- [ ] Caps hold: never more than 5 expanded files, never more than 3 chunks per
+- [x] Caps hold: never more than 5 expanded files, never more than 3 chunks per
       file, even when a result imports dozens of modules.
-- [ ] A hub file with >20 inbound or outbound imports is skipped entirely.
-- [ ] Files already present as direct hits are not re-added as expansions.
-- [ ] Empty input (`results == []`) returns `[]` with no `store` calls.
-- [ ] No `unwrap()` outside `#[cfg(test)]`.
+- [x] A hub file with >20 inbound or outbound imports is skipped entirely.
+- [x] Files already present as direct hits are not re-added as expansions.
+- [x] Empty input (`results == []`) returns `[]` with no `store` calls.
+- [x] No `unwrap()` outside `#[cfg(test)]`.
 
 ## Verification
 

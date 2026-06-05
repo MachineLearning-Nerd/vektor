@@ -78,21 +78,21 @@ with no regression on Phase 4 search latency.
 
 ## Acceptance criteria
 
-- [ ] `get_context_for_prompt` returns the full PRD §5.3 `ContextPackage` JSON:
+- [x] `get_context_for_prompt` returns the full PRD §5.3 `ContextPackage` JSON:
       `chunks`, `files_included`, `total_tokens`, `budget_used_pct`,
       `missing_context_warnings`, `result_confidence`, `budget_gap_reason`,
       `clusters` all present.
-- [ ] `token_budget=8000` yields `total_tokens` within ±5% of target (two-pass).
-- [ ] An 80%-overlap sliding-window fixture produces merged chunks.
-- [ ] A query hitting a source file includes chunks from its matching test file
+- [x] `token_budget=8000` yields `total_tokens` within ±5% of target (two-pass).
+- [x] An 80%-overlap sliding-window fixture produces merged chunks.
+- [x] A query hitting a source file includes chunks from its matching test file
       when one exists.
-- [ ] A recent relevant file outranks an older same-score file; a recent
+- [x] A recent relevant file outranks an older same-score file; a recent
       irrelevant file is kept out of top-5 by the min-score gate.
-- [ ] Fresh `vektor index` returns BM25 results within 5s; for the indexed project
+- [x] Fresh `vektor index` returns BM25 results within 5s; for the indexed project
       `index_status` reads `"partial"` during shallow and `"full"` after deep.
-- [ ] First query after warm-up completes in <150ms (model-backed `#[ignore]`d).
-- [ ] CI green with no Phase 4 search-latency regression.
-- [ ] No `unwrap()` outside `#[cfg(test)]`.
+- [x] First query after warm-up completes in <150ms (model-backed `#[ignore]`d).
+- [x] CI green with no Phase 4 search-latency regression.
+- [x] No `unwrap()` outside `#[cfg(test)]`.
 
 ## Verification
 
