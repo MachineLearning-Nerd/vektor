@@ -164,19 +164,19 @@ Phase 3 is ✅ Done. All embedding/storage tasks landed; `v0.3.0` is prepared as
 
 | Task | Depends on | Blocks | Status |
 |---|---|---|---|
-| 5.1 TokenCounter (lang-specific + tiktoken-rs two-pass) | 4.5 | 5.5 | 🟡 |
-| 5.2 Deduplicator (50% overlap threshold) | 4.5 | 5.5 | 🟡 |
-| 5.3 RelatedExpander (chunk-level + tiered + hub-file skip) | 4.5 | 5.5 | 🟡 |
-| 5.4 QueryCache (LRU + file-level invalidation) | 4.5 | 5.5 | 🟡 |
-| 5.5 ContextAssembler orchestrator | 5.1, 5.2, 5.3, 5.4, 5.9 | 5.6 | 🟡 |
-| 5.6 handle_get_context_for_prompt | 4.8, 5.5 | 5.13 | 🟡 |
-| 5.7 ShallowIndexer (two-tier) | 2.6, 4.1 | 5.8 | 🟡 |
-| 5.8 IndexStatusTracker | 5.7 | 5.13 | 🟡 |
-| 5.9 RecencyTracker + min-score gate | 4.5 | 5.5 | 🟡 |
-| 5.10 SynonymExpander static map | 4.4 | (in 4.4) | 🟡 |
-| 5.11 AdaptiveWeights | 4.4 | (in 4.4) | 🟡 |
-| 5.12 WarmUp at server startup | 3.2 | 5.13 | 🟡 |
-| 5.13 Stage-5 integration check | 5.6, 5.8, 5.12 | 6.* | 🟡 |
+| 5.1 TokenCounter (lang-specific + tiktoken-rs two-pass) | 4.5 | 5.5 | ✅ |
+| 5.2 Deduplicator (50% overlap threshold) | 4.5 | 5.5 | ✅ |
+| 5.3 RelatedExpander (chunk-level + tiered + hub-file skip) | 4.5 | 5.5 | ✅ |
+| 5.4 QueryCache (LRU + file-level invalidation) | 4.5 | 5.5 | ✅ |
+| 5.5 ContextAssembler orchestrator | 5.1, 5.2, 5.3, 5.4, 5.9 | 5.6 | ✅ |
+| 5.6 handle_get_context_for_prompt | 4.8, 5.5 | 5.13 | ✅ |
+| 5.7 ShallowIndexer (two-tier) | 2.6, 4.1 | 5.8 | ✅ |
+| 5.8 IndexStatusTracker | 5.7 | 5.13 | ✅ |
+| 5.9 RecencyTracker + min-score gate | 4.5 | 5.5 | ✅ |
+| 5.10 SynonymExpander static map | 4.4 | (in 4.4) | ✅ |
+| 5.11 AdaptiveWeights | 4.4 | (in 4.4) | ✅ |
+| 5.12 WarmUp at server startup | 3.2 | 5.13 | ✅ |
+| 5.13 Stage-5 integration check | 5.6, 5.8, 5.12 | 6.* | ✅ |
 
 ### Phase 6 — Launch Polish (task list — per-task files TBD)
 

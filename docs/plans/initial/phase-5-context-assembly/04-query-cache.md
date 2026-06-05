@@ -64,19 +64,19 @@ the handler/assembler applies those later.
 
 ## Acceptance criteria
 
-- [ ] A repeated `(query, mode, project_hash)` within 60s returns the cached
+- [x] A repeated `(query, mode, project_hash)` within 60s returns the cached
       payload (a hit), not a recomputation.
-- [ ] Changing `scope` / `max_files` / `include_related` / `min_relevance` /
+- [x] Changing `scope` / `max_files` / `include_related` / `min_relevance` /
       `token_budget` / `include_docs` can reuse the same cached hit candidate pool.
-- [ ] An entry older than 60s is treated as a miss and evicted on access.
-- [ ] `invalidate_file("src/auth.rs")` evicts only entries whose
+- [x] An entry older than 60s is treated as a miss and evicted on access.
+- [x] `invalidate_file("src/auth.rs")` evicts only entries whose
       `files_included` contains `src/auth.rs`; an unrelated cached query survives.
-- [ ] Capacity is bounded (default 100); inserting beyond capacity evicts the
+- [x] Capacity is bounded (default 100); inserting beyond capacity evicts the
       least-recently-used entry.
-- [ ] Differing `mode` or `project_hash` for the same query text are distinct keys
+- [x] Differing `mode` or `project_hash` for the same query text are distinct keys
       (no cross-mode / cross-project bleed).
-- [ ] `bypass_cache` skips the `get` but a subsequent `put` repopulates.
-- [ ] No `unwrap()` outside `#[cfg(test)]` (`NonZeroUsize` capacity built safely).
+- [x] `bypass_cache` skips the `get` but a subsequent `put` repopulates.
+- [x] No `unwrap()` outside `#[cfg(test)]` (`NonZeroUsize` capacity built safely).
 
 ## Verification
 

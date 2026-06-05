@@ -12,14 +12,21 @@ use serde_json::{Value, json};
 use crate::{
     cli::{IndexOptions, IndexStats},
     config::Config,
+    context::{
+        assembler::{ContextAssembler, RelatedExpansion},
+        cache::QueryCache,
+        types::{AssemblyConfig, ChunkSource, Confidence, ContextChunk, ContextPackage, GapReason},
+    },
     embedder::{Embedder, build_embedder},
+    index_status::{IndexPhase, IndexStatusTracker, project_key},
     search::hybrid::{
         HybridResult, HybridSearchConfig, SearchMode, search_hybrid, search_keyword_only,
         search_semantic_only,
     },
     secrets::SecretDetector,
+    shallow_indexer::ShallowIndexer,
     state::{FileStatus, HashStore, hash_file},
-    text_index::TextIndex,
+    text_index::{KeywordHit, TextIndex},
     vector_store::VectorStore,
 };
 
@@ -60,7 +67,7 @@ impl EmbedderCacheKey {
 }
 
 impl EmbedderCache {
-    async fn get(&self, config: &Config) -> Result<Arc<dyn Embedder>, String> {
+    pub(crate) async fn get(&self, config: &Config) -> Result<Arc<dyn Embedder>, String> {
         let key = EmbedderCacheKey::from_config(config);
         if let Some(embedder) = self.inner.lock().await.get(&key).cloned() {
             return Ok(embedder);
@@ -76,6 +83,17 @@ impl EmbedderCache {
 #[derive(Clone, Default)]
 pub(crate) struct IndexHealthCache {
     inner: Arc<tokio::sync::Mutex<HashMap<IndexHealthCacheKey, CachedIndexHealth>>>,
+}
+
+#[derive(Clone, Default)]
+pub(crate) struct ContextQueryCache {
+    inner: Arc<tokio::sync::Mutex<QueryCache>>,
+}
+
+impl ContextQueryCache {
+    async fn clear(&self) {
+        self.inner.lock().await.clear();
+    }
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
@@ -156,21 +174,56 @@ pub async fn handle_index_codebase(args: Option<JsonObject>) -> Value {
 }
 
 pub async fn handle_index_codebase_with_config(args: Option<JsonObject>, config: Config) -> Value {
-    handle_index_codebase_with_optional_cache(args, config, None).await
+    handle_index_codebase_with_optional_cache(
+        args,
+        config,
+        None,
+        None,
+        IndexStatusTracker::default(),
+    )
+    .await
 }
 
+#[allow(dead_code)]
 pub(crate) async fn handle_index_codebase_with_caches(
     args: Option<JsonObject>,
     config: Config,
     health_cache: IndexHealthCache,
+    context_cache: ContextQueryCache,
 ) -> Value {
-    handle_index_codebase_with_optional_cache(args, config, Some(&health_cache)).await
+    handle_index_codebase_with_state(
+        args,
+        config,
+        health_cache,
+        context_cache,
+        IndexStatusTracker::default(),
+    )
+    .await
+}
+
+pub(crate) async fn handle_index_codebase_with_state(
+    args: Option<JsonObject>,
+    config: Config,
+    health_cache: IndexHealthCache,
+    context_cache: ContextQueryCache,
+    status_tracker: IndexStatusTracker,
+) -> Value {
+    handle_index_codebase_with_optional_cache(
+        args,
+        config,
+        Some(&health_cache),
+        Some(&context_cache),
+        status_tracker,
+    )
+    .await
 }
 
 async fn handle_index_codebase_with_optional_cache(
     args: Option<JsonObject>,
     config: Config,
     health_cache: Option<&IndexHealthCache>,
+    context_cache: Option<&ContextQueryCache>,
+    status_tracker: IndexStatusTracker,
 ) -> Value {
     // Production indexer: use the served config + run the shared CLI index core.
     let result = run_index_tool_with_cache_invalidation(
@@ -185,11 +238,32 @@ async fn handle_index_codebase_with_optional_cache(
                 force: request.force,
                 extensions: request.extensions,
             };
-            crate::cli::index_path_with_options(Path::new(&request.path), &config, options)
-                .await
-                .map_err(|e| e.to_string())
+            let root = canonical_project_root(&request.path)?;
+            let key = project_key(&root);
+            status_tracker.mark_building(&key);
+
+            if options.extensions.is_none() {
+                ShallowIndexer::build(Path::new(&request.path), &config)
+                    .map_err(|e| e.to_string())?;
+                status_tracker.mark_partial(&key);
+            }
+
+            let stats =
+                crate::cli::index_path_with_options(Path::new(&request.path), &config, options)
+                    .await
+                    .map_err(|e| e.to_string())?;
+            let text_ready = TextIndex::open_readonly(&root, &config)
+                .map(|index| index.is_ready())
+                .unwrap_or(false);
+            if text_ready && stats.failed == 0 {
+                status_tracker.mark_full(&key);
+            } else {
+                status_tracker.mark_partial(&key);
+            }
+            Ok(stats)
         },
         health_cache,
+        context_cache,
     )
     .await;
 
@@ -248,6 +322,7 @@ async fn run_index_tool_with_cache_invalidation<F, Fut>(
     args: Option<JsonObject>,
     indexer: F,
     health_cache: Option<&IndexHealthCache>,
+    context_cache: Option<&ContextQueryCache>,
 ) -> Result<Value, String>
 where
     F: FnOnce(IndexToolRequest) -> Fut,
@@ -255,6 +330,9 @@ where
 {
     let value = run_index_tool(args, indexer).await?;
     if let Some(cache) = health_cache {
+        cache.clear().await;
+    }
+    if let Some(cache) = context_cache {
         cache.clear().await;
     }
     Ok(value)
@@ -355,7 +433,31 @@ pub(crate) async fn handle_search_code_with_caches(
     embedder_cache: EmbedderCache,
     health_cache: IndexHealthCache,
 ) -> Value {
-    let result = run_search_tool_with_config(args, config, &embedder_cache, &health_cache).await;
+    handle_search_code_with_state(
+        args,
+        config,
+        embedder_cache,
+        health_cache,
+        IndexStatusTracker::default(),
+    )
+    .await
+}
+
+pub(crate) async fn handle_search_code_with_state(
+    args: Option<JsonObject>,
+    config: Config,
+    embedder_cache: EmbedderCache,
+    health_cache: IndexHealthCache,
+    status_tracker: IndexStatusTracker,
+) -> Value {
+    let result = run_search_tool_with_status(
+        args,
+        config,
+        &embedder_cache,
+        &health_cache,
+        Some(&status_tracker),
+    )
+    .await;
 
     match result {
         Ok(value) => value,
@@ -388,6 +490,7 @@ pub async fn handle_get_context_for_prompt_with_config(
         config,
         EmbedderCache::default(),
         IndexHealthCache::default(),
+        ContextQueryCache::default(),
     )
     .await
 }
@@ -397,8 +500,36 @@ pub(crate) async fn handle_get_context_for_prompt_with_caches(
     config: Config,
     embedder_cache: EmbedderCache,
     health_cache: IndexHealthCache,
+    context_cache: ContextQueryCache,
 ) -> Value {
-    let result = run_context_tool_with_config(args, config, &embedder_cache, &health_cache).await;
+    handle_get_context_for_prompt_with_state(
+        args,
+        config,
+        embedder_cache,
+        health_cache,
+        context_cache,
+        IndexStatusTracker::default(),
+    )
+    .await
+}
+
+pub(crate) async fn handle_get_context_for_prompt_with_state(
+    args: Option<JsonObject>,
+    config: Config,
+    embedder_cache: EmbedderCache,
+    health_cache: IndexHealthCache,
+    context_cache: ContextQueryCache,
+    status_tracker: IndexStatusTracker,
+) -> Value {
+    let result = run_context_tool_with_status(
+        args,
+        config,
+        &embedder_cache,
+        &health_cache,
+        &context_cache,
+        Some(&status_tracker),
+    )
+    .await;
 
     match result {
         Ok(value) => value,
@@ -423,16 +554,35 @@ async fn run_search_tool(args: Option<JsonObject>) -> Result<Value, String> {
 
 async fn run_search_tool_with_config(
     args: Option<JsonObject>,
+    config: Config,
+    embedder_cache: &EmbedderCache,
+    health_cache: &IndexHealthCache,
+) -> Result<Value, String> {
+    run_search_tool_with_status(args, config, embedder_cache, health_cache, None).await
+}
+
+async fn run_search_tool_with_status(
+    args: Option<JsonObject>,
     mut config: Config,
     embedder_cache: &EmbedderCache,
     health_cache: &IndexHealthCache,
+    status_tracker: Option<&IndexStatusTracker>,
 ) -> Result<Value, String> {
     let request = parse_search_tool_request(args)?;
     let root = canonical_project_root(&request.path)?;
 
-    run_search_request(&request, &root, &mut config, embedder_cache, health_cache).await
+    run_search_request_with_status(
+        &request,
+        &root,
+        &mut config,
+        embedder_cache,
+        health_cache,
+        status_tracker,
+    )
+    .await
 }
 
+#[allow(dead_code)]
 async fn run_search_request(
     request: &SearchToolRequest,
     root: &Path,
@@ -440,6 +590,43 @@ async fn run_search_request(
     embedder_cache: &EmbedderCache,
     health_cache: &IndexHealthCache,
 ) -> Result<Value, String> {
+    run_search_request_with_status(request, root, config, embedder_cache, health_cache, None).await
+}
+
+async fn run_search_request_with_status(
+    request: &SearchToolRequest,
+    root: &Path,
+    config: &mut Config,
+    embedder_cache: &EmbedderCache,
+    health_cache: &IndexHealthCache,
+    status_tracker: Option<&IndexStatusTracker>,
+) -> Result<Value, String> {
+    if let Some(tracker) = status_tracker {
+        match tracker.status_for_root(root, config) {
+            IndexPhase::Building => {
+                return Ok(search_results_to_json(
+                    &[],
+                    request.mode,
+                    0,
+                    IndexPhase::Building.as_str(),
+                    0.0,
+                    vec!["index is building; results are unavailable until shallow indexing completes".to_string()],
+                ));
+            }
+            IndexPhase::Partial => {
+                return run_search_text_index_only_cached(
+                    request,
+                    root,
+                    config,
+                    Some(health_cache),
+                    IndexPhase::Partial,
+                )
+                .await;
+            }
+            IndexPhase::Full => {}
+        }
+    }
+
     apply_indexed_backend(root, config)?;
     if request.mode == SearchMode::Keyword {
         return run_search_keyword_only_cached(request, root, config, Some(health_cache)).await;
@@ -510,6 +697,48 @@ async fn run_search_keyword_only_cached(
         &status,
         coverage_pct,
         warnings,
+    ))
+}
+
+async fn run_search_text_index_only_cached(
+    request: &SearchToolRequest,
+    root: &Path,
+    config: &Config,
+    health_cache: Option<&IndexHealthCache>,
+    phase: IndexPhase,
+) -> Result<Value, String> {
+    tracing::info!(
+        path = %root.display(),
+        query = %request.query,
+        top_k = request.top_k,
+        mode = ?request.mode,
+        index_status = phase.as_str(),
+        "search_code requested via MCP using shallow keyword tier"
+    );
+
+    let search_limit = expanded_search_limit(request.top_k, request.filter_ext.is_some());
+    let (results, search_time_ms) =
+        search_project_text_index_only(&request.query, search_limit, root, config)
+            .map_err(|e| e.to_string())?;
+    let results = filter_results(
+        results,
+        &ResultFilters {
+            filter_ext: request.filter_ext.as_deref(),
+            min_relevance: None,
+            include_docs: true,
+            scope: None,
+            max_files: None,
+            limit: Some(request.top_k),
+        },
+    );
+    let health = index_health_for_phase(root, config, health_cache, phase).await;
+    Ok(search_results_to_json(
+        &results,
+        SearchMode::Keyword,
+        search_time_ms,
+        &health.status,
+        health.coverage_pct,
+        health.warnings,
     ))
 }
 
@@ -591,18 +820,112 @@ async fn run_context_tool(args: Option<JsonObject>) -> Result<Value, String> {
         config,
         &EmbedderCache::default(),
         &IndexHealthCache::default(),
+        &ContextQueryCache::default(),
     )
     .await
 }
 
 async fn run_context_tool_with_config(
     args: Option<JsonObject>,
+    config: Config,
+    embedder_cache: &EmbedderCache,
+    health_cache: &IndexHealthCache,
+    context_cache: &ContextQueryCache,
+) -> Result<Value, String> {
+    run_context_tool_with_status(
+        args,
+        config,
+        embedder_cache,
+        health_cache,
+        context_cache,
+        None,
+    )
+    .await
+}
+
+async fn run_context_tool_with_status(
+    args: Option<JsonObject>,
     mut config: Config,
     embedder_cache: &EmbedderCache,
     health_cache: &IndexHealthCache,
+    context_cache: &ContextQueryCache,
+    status_tracker: Option<&IndexStatusTracker>,
 ) -> Result<Value, String> {
     let request = parse_context_tool_request(args)?;
     let root = canonical_project_root(&request.path)?;
+
+    if let Some(tracker) = status_tracker {
+        match tracker.status_for_root(&root, &config) {
+            IndexPhase::Building => {
+                return assemble_context_from_results(
+                    &request,
+                    &root,
+                    &config,
+                    ContextAssemblyRun {
+                        results: Vec::new(),
+                        search_time_ms: 0,
+                        cache_hit: false,
+                        phase: IndexPhase::Building,
+                    },
+                    Some(health_cache),
+                )
+                .await;
+            }
+            IndexPhase::Partial => {
+                let search_limit =
+                    expanded_search_limit(request.max_files.saturating_mul(4).max(8), true);
+                let project_hash = project_hash(&root);
+                let mut cache_hit = false;
+                let results = if !request.bypass_cache {
+                    cached_context_results(
+                        Some(context_cache),
+                        &request.query,
+                        SearchMode::Keyword,
+                        &project_hash,
+                    )
+                    .await
+                } else {
+                    None
+                };
+                let (results, search_time_ms) = if let Some(results) = results {
+                    cache_hit = true;
+                    (results, 0)
+                } else {
+                    let (results, elapsed_ms) = search_project_text_index_only(
+                        &request.query,
+                        search_limit,
+                        &root,
+                        &config,
+                    )
+                    .map_err(|e| e.to_string())?;
+                    put_context_results(
+                        Some(context_cache),
+                        &request.query,
+                        SearchMode::Keyword,
+                        &project_hash,
+                        results.clone(),
+                    )
+                    .await;
+                    (results, elapsed_ms)
+                };
+                return assemble_context_from_results(
+                    &request,
+                    &root,
+                    &config,
+                    ContextAssemblyRun {
+                        results,
+                        search_time_ms,
+                        cache_hit,
+                        phase: IndexPhase::Partial,
+                    },
+                    Some(health_cache),
+                )
+                .await;
+            }
+            IndexPhase::Full => {}
+        }
+    }
+
     apply_indexed_backend(&root, &mut config)?;
     let embedder = embedder_cache.get(&config).await?;
 
@@ -612,8 +935,46 @@ async fn run_context_tool_with_config(
         &config,
         embedder.as_ref(),
         Some(health_cache),
+        Some(context_cache),
     )
     .await
+}
+
+struct ContextAssemblyRun {
+    results: Vec<HybridResult>,
+    search_time_ms: u128,
+    cache_hit: bool,
+    phase: IndexPhase,
+}
+
+async fn assemble_context_from_results(
+    request: &ContextToolRequest,
+    root: &Path,
+    config: &Config,
+    run: ContextAssemblyRun,
+    health_cache: Option<&IndexHealthCache>,
+) -> Result<Value, String> {
+    let health = index_health_for_phase(root, config, health_cache, run.phase).await;
+    let assembly_config = AssemblyConfig {
+        token_budget: request.token_budget,
+        max_files: request.max_files,
+        include_related: request.include_related,
+        min_relevance: request.min_relevance,
+        deduplicate: true,
+        include_docs: request.include_docs,
+        scope: request.scope.clone(),
+    };
+    let assembler = ContextAssembler::with_status(&health.status).with_metadata(
+        run.search_time_ms,
+        health.coverage_pct,
+        run.cache_hit,
+    );
+    let package = assembler
+        .assemble::<VectorStore>(run.results, &assembly_config, None)
+        .await
+        .map_err(|e| e.to_string())?;
+
+    Ok(context_package_to_json(&package, health.warnings))
 }
 
 #[allow(dead_code)]
@@ -623,7 +984,7 @@ async fn run_context_with_embedder(
     config: &Config,
     embedder: &dyn Embedder,
 ) -> Result<Value, String> {
-    run_context_with_embedder_cached(request, root, config, embedder, None).await
+    run_context_with_embedder_cached(request, root, config, embedder, None, None).await
 }
 
 async fn run_context_with_embedder_cached(
@@ -632,6 +993,7 @@ async fn run_context_with_embedder_cached(
     config: &Config,
     embedder: &dyn Embedder,
     health_cache: Option<&IndexHealthCache>,
+    context_cache: Option<&ContextQueryCache>,
 ) -> Result<Value, String> {
     tracing::info!(
         path = %root.display(),
@@ -643,38 +1005,173 @@ async fn run_context_with_embedder_cached(
         "get_context_for_prompt requested via MCP"
     );
 
-    let filter = scope_filter_predicate(request.scope.as_deref());
     let search_limit = expanded_search_limit(request.max_files.saturating_mul(4).max(8), true);
-    let (results, search_time_ms) = search_project(
-        &request.query,
-        SearchMode::Hybrid,
-        search_limit,
-        filter,
-        root,
-        config,
-        embedder,
-    )
-    .await
-    .map_err(|e| e.to_string())?;
-    let results = filter_results(
-        results,
-        &ResultFilters {
-            filter_ext: None,
-            min_relevance: Some(request.min_relevance),
-            include_docs: request.include_docs,
-            scope: request.scope.as_deref(),
-            max_files: Some(request.max_files),
-            limit: None,
-        },
-    );
+    let project_hash = project_hash(root);
+    let mut cache_hit = false;
+    let mut search_time_ms = 0;
+    let results = if !request.bypass_cache {
+        cached_context_results(
+            context_cache,
+            &request.query,
+            SearchMode::Hybrid,
+            &project_hash,
+        )
+        .await
+    } else {
+        None
+    };
+    let results = if let Some(results) = results {
+        cache_hit = true;
+        results
+    } else {
+        let (results, elapsed_ms) = search_project(
+            &request.query,
+            SearchMode::Hybrid,
+            search_limit,
+            None,
+            root,
+            config,
+            embedder,
+        )
+        .await
+        .map_err(|e| e.to_string())?;
+        search_time_ms = elapsed_ms;
+        put_context_results(
+            context_cache,
+            &request.query,
+            SearchMode::Hybrid,
+            &project_hash,
+            results.clone(),
+        )
+        .await;
+        results
+    };
     let health = index_health_for(root, config, health_cache).await;
-
-    Ok(context_results_to_json(
-        &results,
-        request,
+    let assembly_config = AssemblyConfig {
+        token_budget: request.token_budget,
+        max_files: request.max_files,
+        include_related: request.include_related,
+        min_relevance: request.min_relevance,
+        deduplicate: true,
+        include_docs: request.include_docs,
+        scope: request.scope.clone(),
+    };
+    let related_store = if request.include_related {
+        Some(
+            VectorStore::open_existing_for_model(root, config, embedder.dim(), embedder.name())
+                .await
+                .map_err(|e| e.to_string())?,
+        )
+    } else {
+        None
+    };
+    let query_vec = if related_store.is_some() {
+        Some(
+            embedder
+                .embed_query(&request.query)
+                .await
+                .map_err(|e| e.to_string())?,
+        )
+    } else {
+        None
+    };
+    let assembler = ContextAssembler::with_status(&health.status).with_metadata(
         search_time_ms,
-        health,
-    ))
+        health.coverage_pct,
+        cache_hit,
+    );
+    let package =
+        if let (Some(store), Some(query_vec)) = (related_store.as_ref(), query_vec.as_ref()) {
+            assembler
+                .assemble(
+                    results,
+                    &assembly_config,
+                    Some(RelatedExpansion { query_vec, store }),
+                )
+                .await
+                .map_err(|e| e.to_string())?
+        } else {
+            assembler
+                .assemble::<VectorStore>(results, &assembly_config, None)
+                .await
+                .map_err(|e| e.to_string())?
+        };
+
+    Ok(context_package_to_json(&package, health.warnings))
+}
+
+async fn cached_context_results(
+    cache: Option<&ContextQueryCache>,
+    query: &str,
+    mode: SearchMode,
+    project_hash: &str,
+) -> Option<Vec<HybridResult>> {
+    let cache = cache?;
+    cache
+        .inner
+        .lock()
+        .await
+        .get(query, mode, project_hash)
+        .cloned()
+}
+
+async fn put_context_results(
+    cache: Option<&ContextQueryCache>,
+    query: &str,
+    mode: SearchMode,
+    project_hash: &str,
+    results: Vec<HybridResult>,
+) {
+    let Some(cache) = cache else {
+        return;
+    };
+    let files_included = results
+        .iter()
+        .map(|result| result.rel_path.clone())
+        .collect::<HashSet<_>>();
+    cache
+        .inner
+        .lock()
+        .await
+        .put(query, mode, project_hash, results, files_included);
+}
+
+fn project_hash(root: &Path) -> String {
+    project_key(root)
+}
+
+fn search_project_text_index_only(
+    query: &str,
+    top_k: usize,
+    root: &Path,
+    config: &Config,
+) -> crate::error::Result<(Vec<HybridResult>, u128)> {
+    let started_at = Instant::now();
+    let text_index = TextIndex::open_readonly(root, config)?;
+    let results = text_index
+        .search(query, top_k)?
+        .into_iter()
+        .map(keyword_hit_to_result)
+        .collect();
+
+    Ok((results, started_at.elapsed().as_millis()))
+}
+
+fn keyword_hit_to_result(hit: KeywordHit) -> HybridResult {
+    HybridResult {
+        chunk_id: hit.chunk_id,
+        rel_path: hit.rel_path,
+        start_line: hit.start_line,
+        end_line: hit.end_line,
+        symbol_name: hit.symbol_name,
+        symbol_type: None,
+        language: hit.language,
+        content: hit.content,
+        relevance_score: hit.score,
+        semantic_score: None,
+        keyword_score: Some(hit.score),
+        last_modified: 0,
+    }
 }
 
 async fn search_project(
@@ -985,79 +1482,88 @@ fn search_result_to_json(result: &HybridResult, max_score: f32) -> Value {
     })
 }
 
-fn context_results_to_json(
-    results: &[HybridResult],
-    request: &ContextToolRequest,
-    search_time_ms: u128,
-    health: IndexHealth,
-) -> Value {
-    let files_included = distinct_file_count(results);
-    let total_tokens = estimate_total_tokens(results);
-    let budget_used_pct = percentage(total_tokens, request.token_budget);
-    let IndexHealth {
-        status,
-        coverage_pct,
-        mut warnings,
-    } = health;
-    let max_score = max_relevance_score(results);
-
-    warnings.push(
-        "Phase 4 returns naive search chunks only; deduplication and token-budget allocation are deferred to Phase 5"
-            .to_string(),
-    );
-    if request.include_related {
-        warnings.push(
-            "`include_related` was accepted, but related expansion is deferred to Phase 5"
-                .to_string(),
-        );
-    }
-    if request.bypass_cache {
-        warnings.push(
-            "`bypass_cache` was accepted, but Phase 4 does not implement query caching".to_string(),
-        );
-    }
-    if total_tokens > request.token_budget {
-        warnings.push(
-            "`token_budget` was accepted, but Phase 4 does not trim or allocate chunks to fit it"
-                .to_string(),
-        );
-    }
-
+fn context_package_to_json(package: &ContextPackage, health_warnings: Vec<String>) -> Value {
+    let warnings = merged_warnings(health_warnings, package.missing_context_warnings.clone());
     json!({
-        "context": results
+        "context": package
+            .chunks
             .iter()
-            .map(|result| context_result_to_json(result, max_score))
+            .map(context_chunk_to_json)
             .collect::<Vec<_>>(),
         "metadata": {
-            "files_included": files_included,
-            "total_tokens": total_tokens,
-            "budget_used_pct": budget_used_pct,
-            "chunks_returned": results.len(),
-            "chunks_deduplicated": 0,
-            "search_time_ms": search_time_ms,
-            "cache_hit": false,
-            "index_status": status,
-            "index_coverage_pct": coverage_pct,
-            "result_confidence": result_confidence(results, request.min_relevance),
-            "budget_gap_reason": budget_gap_reason(&status),
+            "files_included": package.files_included.len(),
+            "total_tokens": package.total_tokens,
+            "budget_used_pct": package.budget_used_pct,
+            "chunks_returned": package.chunks.len(),
+            "chunks_deduplicated": package.chunks_deduplicated,
+            "search_time_ms": package.search_metadata.search_time_ms,
+            "cache_hit": package.cache_hit,
+            "index_status": package.index_status,
+            "index_coverage_pct": package.index_coverage_pct,
+            "result_confidence": confidence_name(package.result_confidence),
+            "budget_gap_reason": gap_reason_value(package.budget_gap_reason),
             "missing_context_warnings": warnings,
-            "suggested_action": suggested_action(results, &status),
-            "clusters": [],
+            "suggested_action": package.suggested_action,
+            "clusters": package.clusters.iter().map(cluster_to_json).collect::<Vec<_>>(),
         }
     })
 }
 
-fn context_result_to_json(result: &HybridResult, max_score: f32) -> Value {
+fn context_chunk_to_json(chunk: &ContextChunk) -> Value {
     json!({
-        "file": result.rel_path.as_str(),
-        "lines": line_range(result),
-        "symbol": result.symbol_name.as_deref(),
-        "type": result.symbol_type.as_deref(),
-        "language": result.language.as_str(),
-        "relevance": normalized_relevance(result, max_score),
-        "source": "search",
-        "reason": "Primary Phase 4 search result for the query",
-        "content": result.content.as_str(),
+        "file": chunk.rel_path.as_str(),
+        "lines": format!("{}-{}", chunk.lines.0, chunk.lines.1),
+        "symbol": chunk.symbol.as_deref(),
+        "type": chunk.symbol_type.as_deref(),
+        "language": chunk.language.as_str(),
+        "relevance": chunk.relevance_score.clamp(0.0, 1.0),
+        "source": chunk_source_name(chunk.source),
+        "reason": chunk.reason.as_str(),
+        "content": chunk.content.as_str(),
+    })
+}
+
+fn merged_warnings(first: Vec<String>, second: Vec<String>) -> Vec<String> {
+    let mut seen = HashSet::new();
+    let mut warnings = Vec::new();
+    for warning in first.into_iter().chain(second) {
+        if seen.insert(warning.clone()) {
+            warnings.push(warning);
+        }
+    }
+    warnings
+}
+
+fn chunk_source_name(source: ChunkSource) -> &'static str {
+    match source {
+        ChunkSource::Search => "search",
+        ChunkSource::Related => "related",
+        ChunkSource::Dependency => "dependency",
+    }
+}
+
+fn confidence_name(confidence: Confidence) -> &'static str {
+    match confidence {
+        Confidence::High => "high",
+        Confidence::Medium => "medium",
+        Confidence::Low => "low",
+    }
+}
+
+fn gap_reason_value(reason: Option<GapReason>) -> Value {
+    match reason {
+        Some(GapReason::NoMoreRelevant) => json!("no_more_relevant"),
+        Some(GapReason::IndexIncomplete) => json!("index_incomplete"),
+        Some(GapReason::ThresholdFiltered) => json!("threshold_filtered"),
+        None => Value::Null,
+    }
+}
+
+fn cluster_to_json(cluster: &crate::context::types::ResultCluster) -> Value {
+    json!({
+        "path": cluster.path_prefix.as_str(),
+        "chunk_count": cluster.chunk_count,
+        "avg_relevance": cluster.avg_relevance,
     })
 }
 
@@ -1186,6 +1692,7 @@ fn extension_filter_predicate(extensions: Option<&[String]>) -> Option<String> {
     or_predicates(predicates)
 }
 
+#[allow(dead_code)]
 fn scope_filter_predicate(scope: Option<&str>) -> Option<String> {
     let scope = scope?;
     or_predicates(vec![
@@ -1205,6 +1712,7 @@ fn sql_string_literal(value: &str) -> String {
     value.replace('\'', "''")
 }
 
+#[allow(dead_code)]
 fn sql_like_literal(value: &str) -> String {
     let mut escaped = String::with_capacity(value.len());
     for ch in value.chars() {
@@ -1235,6 +1743,49 @@ async fn index_health_for(
     match cache {
         Some(cache) => cache.get(root, config).await,
         None => index_health(root, config),
+    }
+}
+
+async fn index_health_for_phase(
+    root: &Path,
+    config: &Config,
+    cache: Option<&IndexHealthCache>,
+    phase: IndexPhase,
+) -> IndexHealth {
+    let mut health = if phase == IndexPhase::Building {
+        IndexHealth {
+            status: phase.as_str().to_string(),
+            coverage_pct: 0.0,
+            warnings: Vec::new(),
+        }
+    } else {
+        index_health_for(root, config, cache).await
+    };
+    apply_index_phase(&mut health, phase);
+    health
+}
+
+fn apply_index_phase(health: &mut IndexHealth, phase: IndexPhase) {
+    health.status = phase.as_str().to_string();
+    if phase == IndexPhase::Building {
+        health.coverage_pct = 0.0;
+    }
+    health
+        .warnings
+        .retain(|warning| !warning.starts_with("index_status is `"));
+    match phase {
+        IndexPhase::Building => {
+            health.warnings.push(
+                "index is building; results are unavailable until shallow indexing completes"
+                    .to_string(),
+            );
+        }
+        IndexPhase::Partial => {
+            health.warnings.push(
+                "index_status is `partial`; shallow keyword results may be incomplete".to_string(),
+            );
+        }
+        IndexPhase::Full => {}
     }
 }
 
@@ -1346,33 +1897,11 @@ fn result_confidence(results: &[HybridResult], min_relevance: f32) -> &'static s
     }
 }
 
-fn distinct_file_count(results: &[HybridResult]) -> usize {
-    results
-        .iter()
-        .map(|result| result.rel_path.as_str())
-        .collect::<HashSet<_>>()
-        .len()
-}
-
-fn estimate_total_tokens(results: &[HybridResult]) -> usize {
-    results
-        .iter()
-        .map(|result| result.content.len().div_ceil(4))
-        .sum()
-}
-
 fn percentage(numerator: usize, denominator: usize) -> f64 {
     if denominator == 0 {
         return 0.0;
     }
     ((numerator as f64 / denominator as f64) * 1000.0).round() / 10.0
-}
-
-fn budget_gap_reason(index_status: &str) -> Value {
-    if index_status != "full" {
-        return json!("index_incomplete");
-    }
-    Value::Null
 }
 
 fn max_relevance_score(results: &[HybridResult]) -> f32 {
@@ -1387,18 +1916,6 @@ fn normalized_relevance(result: &HybridResult, max_score: f32) -> f32 {
         return 0.0;
     }
     (result.relevance_score / max_score).clamp(0.0, 1.0)
-}
-
-fn suggested_action(results: &[HybridResult], index_status: &str) -> Value {
-    if index_status != "full" {
-        return json!(
-            "Run index_codebase to refresh the project index before relying on this context"
-        );
-    }
-    if results.is_empty() {
-        return json!("Broaden the query, lower min_relevance, or adjust scope");
-    }
-    Value::Null
 }
 
 #[cfg(test)]
@@ -2085,6 +2602,7 @@ mod tests {
             "path".into(),
             Value::String(fixture.repo.to_string_lossy().into_owned()),
         );
+        let query_cache = ContextQueryCache::default();
         let response = run_index_tool_with_cache_invalidation(
             Some(args),
             |_request| async {
@@ -2094,6 +2612,7 @@ mod tests {
                 })
             },
             Some(&cache),
+            Some(&query_cache),
         )
         .await
         .expect("successful index tool should invalidate health cache");
@@ -2105,6 +2624,77 @@ mod tests {
             refreshed.coverage_pct < 100.0,
             "cleared cache must recompute coverage against current files"
         );
+    }
+
+    #[tokio::test]
+    async fn index_tool_success_invalidates_cached_context_queries() {
+        let fixture = indexed_fixture(&[(
+            "src/auth.rs",
+            "pub fn cachequeryneedle() -> bool {\n    true\n}\n",
+        )])
+        .await;
+        let args = search_args(&fixture.repo, "cachequeryneedle");
+        let request = parse_context_tool_request(Some(args.clone())).expect("valid context args");
+        let root = canonical_project_root(&request.path).expect("canonical root");
+        let embedder = FakeEmbedder::new();
+        let health_cache = IndexHealthCache::default();
+        let query_cache = ContextQueryCache::default();
+
+        let first = run_context_with_embedder_cached(
+            &request,
+            &root,
+            &fixture.config,
+            &embedder,
+            Some(&health_cache),
+            Some(&query_cache),
+        )
+        .await
+        .expect("first context");
+        let second = run_context_with_embedder_cached(
+            &request,
+            &root,
+            &fixture.config,
+            &embedder,
+            Some(&health_cache),
+            Some(&query_cache),
+        )
+        .await
+        .expect("second context");
+
+        assert_eq!(first["metadata"]["cache_hit"], false);
+        assert_eq!(second["metadata"]["cache_hit"], true);
+
+        let mut index_args = JsonObject::new();
+        index_args.insert(
+            "path".into(),
+            Value::String(fixture.repo.to_string_lossy().into_owned()),
+        );
+        let _ = run_index_tool_with_cache_invalidation(
+            Some(index_args),
+            |_request| async {
+                Ok(IndexStats {
+                    files: 1,
+                    ..IndexStats::default()
+                })
+            },
+            None,
+            Some(&query_cache),
+        )
+        .await
+        .expect("index tool should succeed");
+
+        let after_invalidation = run_context_with_embedder_cached(
+            &request,
+            &root,
+            &fixture.config,
+            &embedder,
+            Some(&health_cache),
+            Some(&query_cache),
+        )
+        .await
+        .expect("context after index");
+
+        assert_eq!(after_invalidation["metadata"]["cache_hit"], false);
     }
 
     #[tokio::test]
@@ -2247,6 +2837,99 @@ mod tests {
         let results = response["results"].as_array().expect("results array");
         assert_eq!(results[0]["file"], "src/auth.rs");
         assert_eq!(response["metadata"]["mode"], "keyword");
+    }
+
+    #[tokio::test]
+    async fn building_search_returns_empty_without_building_embedder() {
+        let tempdir = tempfile::tempdir().expect("tempdir");
+        let repo = tempdir.path().join("repo");
+        std::fs::create_dir_all(&repo).expect("mkdir repo");
+        std::fs::write(
+            repo.join("lib.rs"),
+            "pub fn buildingneedle() -> bool {\n    true\n}\n",
+        )
+        .expect("write");
+        let mut config = Config::default();
+        config.index.data_dir = tempdir.path().join("data").to_string_lossy().into_owned();
+        config.embedding.backend = "openai".to_string();
+        config.embedding.openai_api_key.clear();
+        config.embedding.fallback_to_onnx = false;
+
+        let args = search_args(&repo, "buildingneedle");
+        let request = parse_search_tool_request(Some(args)).expect("valid search args");
+        let root = canonical_project_root(&request.path).expect("canonical root");
+        let tracker = IndexStatusTracker::default();
+
+        let response = run_search_request_with_status(
+            &request,
+            &root,
+            &mut config,
+            &EmbedderCache::default(),
+            &IndexHealthCache::default(),
+            Some(&tracker),
+        )
+        .await
+        .expect("building search should not require embedder construction");
+
+        assert!(
+            response["results"].as_array().expect("results").is_empty(),
+            "building phase must return no results: {response}"
+        );
+        assert_eq!(response["metadata"]["index_status"], "building");
+        assert!(
+            response["metadata"]["missing_context_warnings"]
+                .as_array()
+                .expect("warnings")
+                .iter()
+                .any(|warning| warning.as_str().expect("warning").contains("building")),
+            "building status must be explicit: {response}"
+        );
+    }
+
+    #[tokio::test]
+    async fn partial_search_uses_shallow_keyword_tier_without_embedder() {
+        let tempdir = tempfile::tempdir().expect("tempdir");
+        let repo = tempdir.path().join("repo");
+        std::fs::create_dir_all(repo.join("src")).expect("mkdir src");
+        std::fs::write(
+            repo.join("src/lib.rs"),
+            "pub fn partialshallowneedle() -> bool {\n    true\n}\n",
+        )
+        .expect("write");
+        let mut config = Config::default();
+        config.index.data_dir = tempdir.path().join("data").to_string_lossy().into_owned();
+        config.embedding.backend = "openai".to_string();
+        config.embedding.openai_api_key.clear();
+        config.embedding.fallback_to_onnx = false;
+        ShallowIndexer::build(&repo, &config).expect("build shallow");
+
+        let args = search_args(&repo, "partialshallowneedle");
+        let request = parse_search_tool_request(Some(args)).expect("valid search args");
+        let root = canonical_project_root(&request.path).expect("canonical root");
+        let tracker = IndexStatusTracker::default();
+
+        let response = run_search_request_with_status(
+            &request,
+            &root,
+            &mut config,
+            &EmbedderCache::default(),
+            &IndexHealthCache::default(),
+            Some(&tracker),
+        )
+        .await
+        .expect("partial search should not require embedder construction");
+
+        let results = response["results"].as_array().expect("results array");
+        assert_eq!(results[0]["file"], "src/lib.rs");
+        assert!(
+            results[0]["snippet"]
+                .as_str()
+                .expect("snippet")
+                .contains("partialshallowneedle"),
+            "partial results must use stored shallow content: {response}"
+        );
+        assert_eq!(response["metadata"]["mode"], "keyword");
+        assert_eq!(response["metadata"]["index_status"], "partial");
     }
 
     #[tokio::test]
@@ -2531,12 +3214,62 @@ mod tests {
         assert_eq!(response["metadata"]["cache_hit"], false);
         assert_eq!(response["metadata"]["index_status"], "full");
         assert!(response["metadata"]["total_tokens"].is_number());
-        assert!(response["metadata"]["budget_gap_reason"].is_null());
+        assert!(response["metadata"]["budget_gap_reason"].is_string());
         assert!(response["metadata"]["clusters"].is_array());
+        let warnings = response["metadata"]["missing_context_warnings"]
+            .as_array()
+            .expect("warnings");
+        assert!(
+            warnings
+                .iter()
+                .all(|warning| !warning.as_str().expect("warning").contains("Phase 4")),
+            "real assembler should not emit Phase 4 deferral warnings: {response}"
+        );
     }
 
     #[tokio::test]
-    async fn get_context_honors_phase4_wire_controls() {
+    async fn building_context_returns_empty_package_without_building_embedder() {
+        let tempdir = tempfile::tempdir().expect("tempdir");
+        let repo = tempdir.path().join("repo");
+        std::fs::create_dir_all(&repo).expect("mkdir repo");
+        std::fs::write(
+            repo.join("lib.rs"),
+            "pub fn contextbuildingneedle() -> bool {\n    true\n}\n",
+        )
+        .expect("write");
+        let mut config = Config::default();
+        config.index.data_dir = tempdir.path().join("data").to_string_lossy().into_owned();
+        config.embedding.backend = "openai".to_string();
+        config.embedding.openai_api_key.clear();
+        config.embedding.fallback_to_onnx = false;
+
+        let mut args = search_args(&repo, "contextbuildingneedle");
+        args.insert("include_related".into(), Value::Bool(false));
+        let tracker = IndexStatusTracker::default();
+        let response = run_context_tool_with_status(
+            Some(args),
+            config,
+            &EmbedderCache::default(),
+            &IndexHealthCache::default(),
+            &ContextQueryCache::default(),
+            Some(&tracker),
+        )
+        .await
+        .expect("building context should not require embedder construction");
+
+        assert!(
+            response["context"].as_array().expect("context").is_empty(),
+            "building phase must return an empty context package: {response}"
+        );
+        assert_eq!(response["metadata"]["index_status"], "building");
+        assert_eq!(
+            response["metadata"]["budget_gap_reason"],
+            "index_incomplete"
+        );
+    }
+
+    #[tokio::test]
+    async fn get_context_honors_wire_controls_with_real_assembler() {
         let fixture = indexed_fixture(&[
             (
                 "src/auth.rs",
@@ -2585,22 +3318,77 @@ mod tests {
             "scope and include_docs=false must shape returned context: {response}"
         );
         assert_eq!(response["metadata"]["files_included"], files.len());
+        assert!(
+            response["metadata"]["total_tokens"]
+                .as_u64()
+                .expect("total tokens")
+                <= 1,
+            "real assembler must enforce token_budget: {response}"
+        );
         let warnings = response["metadata"]["missing_context_warnings"]
             .as_array()
             .expect("warnings");
         assert!(
-            warnings.iter().any(|warning| warning
-                .as_str()
-                .expect("warning")
-                .contains("related expansion")),
-            "include_related deferral must be surfaced: {response}"
-        );
-        assert!(
             warnings
                 .iter()
-                .any(|warning| warning.as_str().expect("warning").contains("query caching")),
-            "bypass_cache deferral must be surfaced: {response}"
+                .all(|warning| !warning.as_str().expect("warning").contains("deferred")),
+            "Phase 4 deferral warnings should be gone: {response}"
         );
+    }
+
+    #[tokio::test]
+    async fn get_context_cache_hit_and_bypass() {
+        let fixture = indexed_fixture(&[(
+            "src/auth.rs",
+            "pub fn cachenoodle_auth() -> bool {\n    true\n}\n",
+        )])
+        .await;
+        let args = search_args(&fixture.repo, "cachenoodle");
+        let request = parse_context_tool_request(Some(args.clone())).expect("valid context args");
+        let root = canonical_project_root(&request.path).expect("canonical root");
+        let embedder = FakeEmbedder::new();
+        let health_cache = IndexHealthCache::default();
+        let query_cache = ContextQueryCache::default();
+
+        let first = run_context_with_embedder_cached(
+            &request,
+            &root,
+            &fixture.config,
+            &embedder,
+            Some(&health_cache),
+            Some(&query_cache),
+        )
+        .await
+        .expect("first context");
+        let second = run_context_with_embedder_cached(
+            &request,
+            &root,
+            &fixture.config,
+            &embedder,
+            Some(&health_cache),
+            Some(&query_cache),
+        )
+        .await
+        .expect("second context");
+
+        let mut bypass_args = args;
+        bypass_args.insert("bypass_cache".into(), Value::Bool(true));
+        let bypass_request =
+            parse_context_tool_request(Some(bypass_args)).expect("valid bypass args");
+        let bypass = run_context_with_embedder_cached(
+            &bypass_request,
+            &root,
+            &fixture.config,
+            &embedder,
+            Some(&health_cache),
+            Some(&query_cache),
+        )
+        .await
+        .expect("bypass context");
+
+        assert_eq!(first["metadata"]["cache_hit"], false);
+        assert_eq!(second["metadata"]["cache_hit"], true);
+        assert_eq!(bypass["metadata"]["cache_hit"], false);
     }
 
     #[test]

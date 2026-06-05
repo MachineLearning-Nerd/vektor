@@ -1,7 +1,7 @@
 use std::{
     fs,
     path::{Path, PathBuf},
-    time::UNIX_EPOCH,
+    time::{SystemTime, UNIX_EPOCH},
 };
 
 use clap::{Parser, Subcommand};
@@ -382,6 +382,9 @@ pub(crate) async fn index_path_with_embedder(
     }
 
     text_index.commit(run_options.mark_text_index_ready)?;
+    if run_options.mark_text_index_ready && stats.failed == 0 {
+        store.mark_full_index_completed(now_secs())?;
+    }
 
     for (rel_path, hash) in processed_files {
         hash_store.set_hash(&rel_path, &hash, FileStatus::Indexed)?;
@@ -419,6 +422,14 @@ fn file_mtime_secs(path: &Path) -> i64 {
         .ok()
         .and_then(|t| t.duration_since(UNIX_EPOCH).ok())
         .and_then(|d| i64::try_from(d.as_secs()).ok())
+        .unwrap_or(0)
+}
+
+fn now_secs() -> i64 {
+    SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .ok()
+        .and_then(|duration| i64::try_from(duration.as_secs()).ok())
         .unwrap_or(0)
 }
 

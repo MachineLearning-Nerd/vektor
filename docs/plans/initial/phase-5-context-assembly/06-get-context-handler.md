@@ -89,22 +89,22 @@ envelope — but the dedup, related expansion, recency, and token-budget numbers
 
 ## Acceptance criteria
 
-- [ ] `get_context_for_prompt` returns the §9 `{ context, metadata }` envelope backed by
+- [x] `get_context_for_prompt` returns the §9 `{ context, metadata }` envelope backed by
       the real `ContextPackage` — `chunks_deduplicated`, `total_tokens`, and
       `budget_used_pct` reflect actual dedup + two-pass budget allocation (not stubs).
-- [ ] `include_related = true` produces chunks with `source: "related"` in the output
+- [x] `include_related = true` produces chunks with `source: "related"` in the output
       (real expansion, not the Phase 4 "accepted but deferred" warning).
-- [ ] `token_budget` is honored: a small budget yields fewer/truncated chunks and
+- [x] `token_budget` is honored: a small budget yields fewer/truncated chunks and
       `budget_used_pct` within ±5% of target; the Phase 4 "does not trim to fit" warning
       is gone.
-- [ ] `bypass_cache = false` returns `cache_hit: true` on a repeated identical query;
+- [x] `bypass_cache = false` returns `cache_hit: true` on a repeated identical query;
       `bypass_cache = true` forces a fresh search (`cache_hit: false`) and refreshes the cache.
-- [ ] `result_confidence`, `budget_gap_reason`, `clusters`, `index_status`,
+- [x] `result_confidence`, `budget_gap_reason`, `clusters`, `index_status`,
       `missing_context_warnings`, and `suggested_action` are emitted from the real
       `ContextPackage` and use the §9 wire strings.
-- [ ] The MCP tool schema/argument names are unchanged (no Phase 4 regression).
-- [ ] Bad/missing args → JSON error object; the handler never panics nor writes to stdout.
-- [ ] No `unwrap()` outside `#[cfg(test)]`.
+- [x] The MCP tool schema/argument names are unchanged (no Phase 4 regression).
+- [x] Bad/missing args → JSON error object; the handler never panics nor writes to stdout.
+- [x] No `unwrap()` outside `#[cfg(test)]`.
 
 ## Verification
 

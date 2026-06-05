@@ -16,6 +16,7 @@ fn mcp_stdio_initialize_list_and_call() {
         .env("HOME", fake_home.path())
         .env("USERPROFILE", fake_home.path())
         .env("VEKTOR_LOG", "trace")
+        .env("VEKTOR_UNSAFE_SKIP_WARMUP", "1")
         .stdin(Stdio::piped())
         .stdout(Stdio::piped())
         .stderr(Stdio::piped())
