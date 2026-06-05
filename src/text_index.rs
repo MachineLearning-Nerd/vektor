@@ -117,20 +117,10 @@ impl TextIndex {
         }
 
         let (schema, fields) = build_schema();
-        let directory = MmapDirectory::open(&tantivy_dir).map_err(|error| {
-            VektorError::Storage(format!(
-                "failed to open Tantivy directory {}: {error}",
-                tantivy_dir.display()
-            ))
-        })?;
         let index = if with_writer {
-            Index::open_or_create(directory, schema.clone()).map_err(|error| {
-                VektorError::Storage(format!(
-                    "failed to open or create Tantivy index {}: {error}",
-                    tantivy_dir.display()
-                ))
-            })?
+            open_or_create_with_schema_rebuild(&tantivy_dir, schema.clone())?
         } else {
+            let directory = open_mmap_directory(&tantivy_dir)?;
             Index::open(directory).map_err(|error| {
                 VektorError::Storage(format!(
                     "failed to open existing Tantivy index {}: {error}",
@@ -365,6 +355,57 @@ impl TextIndex {
     fn searchable_marker_path(&self) -> PathBuf {
         self.tantivy_dir.join(SEARCHABLE_MARKER_FILE)
     }
+}
+
+fn open_mmap_directory(tantivy_dir: &Path) -> Result<MmapDirectory> {
+    MmapDirectory::open(tantivy_dir).map_err(|error| {
+        VektorError::Storage(format!(
+            "failed to open Tantivy directory {}: {error}",
+            tantivy_dir.display()
+        ))
+    })
+}
+
+fn open_or_create_with_schema_rebuild(tantivy_dir: &Path, schema: Schema) -> Result<Index> {
+    let directory = open_mmap_directory(tantivy_dir)?;
+    match Index::open_or_create(directory, schema.clone()) {
+        Ok(index) => Ok(index),
+        Err(error) if is_tantivy_schema_mismatch(&error) => {
+            tracing::warn!(
+                path = %tantivy_dir.display(),
+                error = %error,
+                "rebuilding Tantivy text index after schema mismatch"
+            );
+            if tantivy_dir.exists() {
+                fs::remove_dir_all(tantivy_dir).map_err(|remove_error| {
+                    VektorError::Storage(format!(
+                        "failed to remove outdated Tantivy index {} after schema mismatch: {remove_error}",
+                        tantivy_dir.display()
+                    ))
+                })?;
+            }
+            fs::create_dir_all(tantivy_dir)?;
+            let directory = open_mmap_directory(tantivy_dir)?;
+            Index::open_or_create(directory, schema).map_err(|create_error| {
+                VektorError::Storage(format!(
+                    "failed to recreate Tantivy index {} after schema mismatch: {create_error}",
+                    tantivy_dir.display()
+                ))
+            })
+        }
+        Err(error) => Err(VektorError::Storage(format!(
+            "failed to open or create Tantivy index {}: {error}",
+            tantivy_dir.display()
+        ))),
+    }
+}
+
+fn is_tantivy_schema_mismatch(error: &tantivy::TantivyError) -> bool {
+    matches!(
+        error,
+        tantivy::TantivyError::SchemaError(message)
+            if message.contains("schema does not match")
+    )
 }
 
 fn keyword_hit_from_doc(
@@ -603,6 +644,21 @@ mod tests {
         }
     }
 
+    fn legacy_schema_without_stored_content() -> Schema {
+        let mut builder = Schema::builder();
+
+        builder.add_text_field("chunk_id", STORED);
+        builder.add_text_field("rel_path", STRING | STORED);
+        builder.add_text_field("content", stemmed_text_options());
+        builder.add_text_field("symbol_name", stemmed_text_options().set_stored());
+        builder.add_text_field("language", STRING | STORED);
+        builder.add_u64_field("start_line", STORED);
+        builder.add_u64_field("end_line", STORED);
+        builder.add_text_field("index_depth", STRING | STORED);
+
+        builder.build()
+    }
+
     #[test]
     fn new_creates_index() {
         let project = tempfile::tempdir().expect("project");
@@ -628,6 +684,39 @@ mod tests {
         let second = TextIndex::new(project.path(), &config).expect("reopen text index");
         assert_eq!(second.tantivy_dir(), tantivy_dir.as_path());
         assert!(sentinel.is_file(), "reopen must not wipe existing dir");
+    }
+
+    #[test]
+    fn new_rebuilds_legacy_schema_mismatch() {
+        let project = tempfile::tempdir().expect("project");
+        let data_dir = tempfile::tempdir().expect("data dir");
+        let config = config_with_data_dir(data_dir.path());
+        let tantivy_dir = project_data_dir(project.path(), &config)
+            .expect("project data dir")
+            .join(TANTIVY_SUBDIR);
+        std::fs::create_dir_all(&tantivy_dir).expect("mkdir tantivy");
+        let legacy_directory = MmapDirectory::open(&tantivy_dir).expect("open legacy directory");
+        Index::open_or_create(legacy_directory, legacy_schema_without_stored_content())
+            .expect("create legacy index");
+
+        let mut index = TextIndex::new(project.path(), &config).expect("rebuild text index");
+        let chunk = chunk(
+            "chunk-1",
+            "src/lib.rs",
+            "pub fn schema_migration_needle() -> bool { true }",
+            Some("schema_migration_needle"),
+            Some(Language::Rust),
+            1,
+            1,
+        );
+        index.add_chunks(&[chunk]).expect("add chunk");
+        index.commit().expect("commit rebuilt index");
+        let hits = index.search("schema_migration_needle", 5).expect("search");
+
+        assert_eq!(
+            hits[0].content,
+            "pub fn schema_migration_needle() -> bool { true }"
+        );
     }
 
     #[test]

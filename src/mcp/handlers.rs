@@ -238,13 +238,14 @@ async fn handle_index_codebase_with_optional_cache(
                 force: request.force,
                 extensions: request.extensions,
             };
+            let index_path = canonical_index_path(&request.path)?;
             let root = canonical_project_root(&request.path)?;
             let key = project_key(&root);
             status_tracker.mark_building(&key);
 
             if options.extensions.is_none() {
-                if let Err(error) = ShallowIndexer::build(Path::new(&request.path), &config)
-                    .map_err(|e| e.to_string())
+                if let Err(error) =
+                    ShallowIndexer::build(&index_path, &config).map_err(|e| e.to_string())
                 {
                     restore_index_status_from_disk(&status_tracker, &root, &config, &key);
                     return Err(error);
@@ -252,13 +253,9 @@ async fn handle_index_codebase_with_optional_cache(
                 status_tracker.mark_partial(&key);
             }
 
-            let stats = match crate::cli::index_path_with_options(
-                Path::new(&request.path),
-                &config,
-                options,
-            )
-            .await
-            .map_err(|e| e.to_string())
+            let stats = match crate::cli::index_path_with_options(&index_path, &config, options)
+                .await
+                .map_err(|e| e.to_string())
             {
                 Ok(stats) => stats,
                 Err(error) => {
@@ -297,6 +294,12 @@ fn restore_index_status_from_disk(
     project_key: &str,
 ) {
     status_tracker.set_phase(project_key, phase_from_disk(root, config));
+}
+
+fn canonical_index_path(path: &str) -> Result<PathBuf, String> {
+    Path::new(path)
+        .canonicalize()
+        .map_err(|error| format!("invalid path `{path}`: {error}"))
 }
 
 /// Generic core of the `index_codebase` tool: parse args, run `indexer`, map the
