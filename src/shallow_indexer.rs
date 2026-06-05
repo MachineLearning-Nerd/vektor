@@ -81,15 +81,7 @@ fn collect_shallow_files(path: &Path, config: &Config) -> Result<(PathBuf, Vec<S
         if file_is_oversized(path, config)? {
             return Ok((root, Vec::new()));
         }
-        let rel_path = path
-            .file_name()
-            .map(|name| name.to_string_lossy().replace('\\', "/"))
-            .ok_or_else(|| {
-                VektorError::Config(format!(
-                    "cannot derive repository-relative path for {}",
-                    path.display()
-                ))
-            })?;
+        let rel_path = relative_path(&root, path);
         return Ok((
             root,
             vec![ShallowFile {
@@ -306,6 +298,22 @@ mod tests {
         let hits = index.search("removeshallowneedle", 5).expect("search");
 
         assert!(hits.is_empty());
+    }
+
+    #[test]
+    fn collect_shallow_files_for_single_file_keeps_nested_relative_path() {
+        let tempdir = tempfile::tempdir().expect("tempdir");
+        let repo = tempdir.path().join("repo");
+        std::fs::create_dir_all(repo.join("src")).expect("mkdir src");
+        let file = repo.join("src").join("main.rs");
+        std::fs::write(&file, "fn main() {}\n").expect("write main");
+        let config = config_for(&tempdir.path().join("data"));
+
+        let (root, files) = collect_shallow_files(&file, &config).expect("collect single file");
+
+        assert_eq!(root, repo.join("src"));
+        assert_eq!(files.len(), 1);
+        assert_eq!(files[0].rel_path, "main.rs");
     }
 
     fn count_depth(index: &TextIndex, depth: &str) -> usize {

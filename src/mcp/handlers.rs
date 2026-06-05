@@ -18,7 +18,7 @@ use crate::{
         types::{AssemblyConfig, ChunkSource, Confidence, ContextChunk, ContextPackage, GapReason},
     },
     embedder::{Embedder, build_embedder},
-    index_status::{IndexPhase, IndexStatusTracker, project_key},
+    index_status::{IndexPhase, IndexStatusTracker, phase_from_disk, project_key},
     search::hybrid::{
         HybridResult, HybridSearchConfig, SearchMode, search_hybrid, search_keyword_only,
         search_semantic_only,
@@ -243,15 +243,29 @@ async fn handle_index_codebase_with_optional_cache(
             status_tracker.mark_building(&key);
 
             if options.extensions.is_none() {
-                ShallowIndexer::build(Path::new(&request.path), &config)
-                    .map_err(|e| e.to_string())?;
+                if let Err(error) = ShallowIndexer::build(Path::new(&request.path), &config)
+                    .map_err(|e| e.to_string())
+                {
+                    restore_index_status_from_disk(&status_tracker, &root, &config, &key);
+                    return Err(error);
+                }
                 status_tracker.mark_partial(&key);
             }
 
-            let stats =
-                crate::cli::index_path_with_options(Path::new(&request.path), &config, options)
-                    .await
-                    .map_err(|e| e.to_string())?;
+            let stats = match crate::cli::index_path_with_options(
+                Path::new(&request.path),
+                &config,
+                options,
+            )
+            .await
+            .map_err(|e| e.to_string())
+            {
+                Ok(stats) => stats,
+                Err(error) => {
+                    restore_index_status_from_disk(&status_tracker, &root, &config, &key);
+                    return Err(error);
+                }
+            };
             let text_ready = TextIndex::open_readonly(&root, &config)
                 .map(|index| index.is_ready())
                 .unwrap_or(false);
@@ -274,6 +288,15 @@ async fn handle_index_codebase_with_optional_cache(
             json!({ "status": "error", "error": message })
         }
     }
+}
+
+fn restore_index_status_from_disk(
+    status_tracker: &IndexStatusTracker,
+    root: &Path,
+    config: &Config,
+    project_key: &str,
+) {
+    status_tracker.set_phase(project_key, phase_from_disk(root, config));
 }
 
 /// Generic core of the `index_codebase` tool: parse args, run `indexer`, map the
@@ -2695,6 +2718,22 @@ mod tests {
         .expect("context after index");
 
         assert_eq!(after_invalidation["metadata"]["cache_hit"], false);
+    }
+
+    #[tokio::test]
+    async fn restore_index_status_from_disk_keeps_previous_phase_on_error_path() {
+        let fixture = indexed_fixture(&[(
+            "src/auth.rs",
+            "pub fn statusrecovery() -> bool {\n    true\n}\n",
+        )])
+        .await;
+        let tracker = IndexStatusTracker::default();
+        let key = project_key(&fixture.repo);
+        tracker.mark_building(&key);
+
+        restore_index_status_from_disk(&tracker, &fixture.repo, &fixture.config, &key);
+
+        assert_eq!(tracker.status(&key), IndexPhase::Full);
     }
 
     #[tokio::test]
