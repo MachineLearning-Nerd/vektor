@@ -83,7 +83,11 @@ pub enum ModelsAction {
 }
 
 pub async fn run(cli: Cli) -> Result<()> {
-    if let Command::Init(args) = cli.command {
+    let init_args = match &cli.command {
+        Command::Init(args) => Some(args.clone()),
+        _ => None,
+    };
+    if let Some(args) = init_args {
         let report = crate::init::run(args)?;
         println!("{}", report.as_text());
         return Ok(());

@@ -15,6 +15,12 @@ def parse_metrics(text: str) -> dict[str, float]:
     values: dict[str, float] = {}
     for metric in METRICS:
         match = re.search(rf"{re.escape(metric)}:\s*([0-9]+(?:\.[0-9]+)?)", text)
+        if not match:
+            match = re.search(
+                rf"^\|\s*{re.escape(metric)}\s*\|\s*([0-9]+(?:\.[0-9]+)?)\s*\|",
+                text,
+                re.MULTILINE,
+            )
         if match:
             values[metric] = float(match.group(1))
     missing = [metric for metric in METRICS if metric not in values]
