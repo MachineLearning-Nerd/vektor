@@ -9,6 +9,7 @@ mod discovery;
 mod embedder;
 mod error;
 mod index_status;
+mod init;
 mod mcp;
 mod models;
 mod search;

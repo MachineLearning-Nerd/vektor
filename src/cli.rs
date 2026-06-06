@@ -35,6 +35,9 @@ pub struct Cli {
 
 #[derive(Subcommand, Debug)]
 pub enum Command {
+    /// Register Vektor with supported MCP clients
+    Init(crate::init::InitArgs),
+
     /// Index a codebase for later search and context assembly
     Index(IndexArgs),
 
@@ -80,10 +83,17 @@ pub enum ModelsAction {
 }
 
 pub async fn run(cli: Cli) -> Result<()> {
+    if let Command::Init(args) = cli.command {
+        let report = crate::init::run(args)?;
+        println!("{}", report.as_text());
+        return Ok(());
+    }
+
     let config = crate::config::Config::load(cli.config.clone())?;
     tracing::debug!(?config, "configuration loaded");
 
     match cli.command {
+        Command::Init(_) => unreachable!("handled before config load"),
         Command::Index(args) => {
             tracing::info!(
                 path = %args.path.display(),

@@ -13,12 +13,12 @@ Add `vektor init` so a fresh install can register the local MCP server with supp
 
 ## Acceptance Criteria
 
-- [ ] Claude Code config is written to `~/.claude.json`.
-- [ ] Cursor config is written to `~/.cursor/mcp.json`.
-- [ ] Codex CLI config is written to `~/.codex/config.toml`.
-- [ ] `--dry-run` prints the planned change without writing.
-- [ ] Existing unrelated config survives byte-for-byte where practical.
-- [ ] Existing `vektor` entries are protected without `--force`.
+- [x] Claude Code config is written to `~/.claude.json`.
+- [x] Cursor config is written to `~/.cursor/mcp.json`.
+- [x] Codex CLI config is written to `~/.codex/config.toml`.
+- [x] `--dry-run` prints the planned change without writing.
+- [x] Existing unrelated config survives byte-for-byte where practical.
+- [x] Existing `vektor` entries are protected without `--force`.
 
 ## Verification
 
