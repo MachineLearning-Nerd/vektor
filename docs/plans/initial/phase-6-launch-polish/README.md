@@ -5,7 +5,7 @@
 **Roadmap mapping**: Stage 2 / `v0.4.0` (the launchable alpha)
 **PRD mapping**: Section 7.7 (`vektor init`), Section 14 Phase 1 Must-Have criteria, plus brought-forward C8.1 (full matrix) + C8.2 (signed binaries) + BM1 (lightweight benchmark)
 **Effort estimate**: 2–3 weeks of focused part-time work
-**Status**: ✅ Local-first implementation complete — final local gate/PR review pending; release/public actions remain deferred
+**Status**: ✅ Local-first implementation complete and verified — PR review pending; release/public actions remain deferred
 
 ---
 
@@ -31,7 +31,7 @@ All must be true before opening the Phase 6 PR:
 - [x] Release workflow generates checksum, signature, certificate, SBOM metadata, and provenance artifacts
 - [x] `BENCHMARKS.md` has the `v0.4.0` baseline showing Precision@5 / Recall@5 / MRR on the 20 Tokio fixture queries
 - [x] Release notes and release authorization checklist are drafted
-- [ ] Final local gate passes on the branch before push/PR
+- [x] Final local gate passes on the branch before push/PR
 
 ## Deferred release authorization gates
 

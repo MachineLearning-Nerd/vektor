@@ -33,7 +33,7 @@ The first three tools (`index_codebase`, `search_code`, `get_context_for_prompt`
 
 ## Status
 
-**Pre-alpha — `v0.4.0` local-first launch polish implemented on the Phase 6 branch; public release pending authorization.**
+**Pre-alpha — `v0.4.0` local-first launch polish implemented and verified on the Phase 6 branch; public release pending authorization.**
 
 The current artifacts are the design documents plus a runnable Rust implementation through the Stage 2 local-first scope:
 
