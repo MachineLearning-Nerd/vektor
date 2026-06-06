@@ -5,7 +5,7 @@
 **Roadmap mapping**: Stage 2 / `v0.4.0` (the launchable alpha)
 **PRD mapping**: Section 7.7 (`vektor init`), Section 14 Phase 1 Must-Have criteria, plus brought-forward C8.1 (full matrix) + C8.2 (signed binaries) + BM1 (lightweight benchmark)
 **Effort estimate**: 2–3 weeks of focused part-time work
-**Status**: ⬜ Not started — per-task files written, implementation not started
+**Status**: 🚧 In progress — local-first implementation is proceeding task-by-task; release/public actions remain deferred
 
 ---
 
@@ -14,7 +14,7 @@
 | ID | Task | Effort | Depends on | Status |
 |---|---|---|---|---|
 | 6.1 | `vektor init` MCP-config writer — detect Claude Code, Cursor, Codex CLI; write entries; `--force`, `--agent`, `--dry-run` flags (per PRD §7.7) | M | 4.7 | ✅ Done — `(this commit)` |
-| 6.2 | Release pipeline — extend `ci.yml` matrix to full 5 platforms (macOS-x86_64/aarch64, linux-x86_64/aarch64, windows-x86_64); separate `release.yml` triggered by tag push; signed binaries + SHA-256 + SBOM | L | 0.2, 1.7b (start after v0.1 publish; finalize here) | ⬜ |
+| 6.2 | Release pipeline — extend `ci.yml` matrix to full 5 platforms (macOS-x86_64/aarch64, linux-x86_64/aarch64, windows-x86_64); separate `release.yml` triggered by tag push; signed binaries + SHA-256 + SBOM | L | 0.2, 1.7b (start after v0.1 publish; finalize here) | ✅ Done — local scaffolded; live release run deferred |
 | 6.3 | Lightweight benchmark gate — 20 hand-labeled queries against tokio's source, run via `cargo bench`, output to `BENCHMARKS.md` | M | 5.13 | ⬜ |
 | 6.4 | `BENCHMARKS.md` baseline — initial commit + CI step that posts benchmark deltas on PRs | S | 6.3 | ⬜ |
 | 6.5 | `v0.4.0` release tag + announcement | M | 5.13, 6.1, 6.2, 6.4 | ⬜ |

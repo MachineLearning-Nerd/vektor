@@ -183,7 +183,7 @@ Phase 3 is ✅ Done. All embedding/storage tasks landed; `v0.3.0` is prepared as
 | Task | Depends on | Blocks | Status |
 |---|---|---|---|
 | 6.1 `vektor init` MCP config writer | 4.7 | 6.5 | ✅ `(this commit)` |
-| 6.2 Release pipeline (signed binaries + checksums) | 0.2, 1.7b | 6.5 | 🟢 |
+| 6.2 Release pipeline (signed binaries + checksums) | 0.2, 1.7b | 6.5 | ✅ `(this commit)` |
 | 6.3 Lightweight benchmark gate (20 queries vs tokio) | 5.13 | 6.4 | 🟢 |
 | 6.4 BENCHMARKS.md baseline | 6.3 | 6.5 | 🟡 |
 | 6.5 v0.4.0 release tag | 5.13, 6.1, 6.2, 6.4 | (stage 3) | 🟡 |
