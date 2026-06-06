@@ -16,9 +16,9 @@ This plan covers **Roadmap Stage 2** only (see [`VEKTOR_ROADMAP.md`](../../../VE
 | Phase 3 — Embedding + Storage | `v0.3.0` | ✅ **Done** — prepared (private, notes-only) | ONNX Jina v2 + OpenAI-compatible embedders + factory, LanceDB vector store (schema/cache/reindex/search/delete), content-addressed re-index cache, secret-aware indexing, `vektor models download`, real vector-only `index_codebase` MCP tool. `v0.3.0` version bumped + release notes drafted; tag/publish pending separate human authorization. |
 | Phase 4 — Search + MCP | (interim) | ✅ **Done** — merged to main | Tantivy BM25 (`TextIndex`), RRF fusion + adaptive weights + synonym expansion, `search_hybrid` (`tokio::join!` + RRF), `index_codebase` extended to write both LanceDB + Tantivy, and real MCP dispatch for the 3 primary tools (`search_code` + naive `get_context_for_prompt`). Merged via PR #4 (`1b39f49`) + review-fix PRs #5/#6. Interim — no release tag (next tag `v0.4.0` after Phase 5). |
 | Phase 5 — Context Assembly | `v0.4.0` | ✅ **Done** — implementation complete and verified | TokenCounter, Deduplicator, RelatedExpander, QueryCache, ShallowIndexer, RecencyTracker. |
-| Phase 6 — Launch Polish | `v0.4.0` | ⬜ Not started | `vektor init`, signed release pipeline, lightweight benchmark gate, `BENCHMARKS.md` baseline. |
+| Phase 6 — Launch Polish | `v0.4.0` | ✅ **Local-first implementation complete** — final gate/PR pending | `vektor init`, 5-platform release workflow scaffold, retrieval benchmark fixture, `BENCHMARKS.md` baseline, and release-readiness docs. Tag/release/crates.io/public actions remain deferred. |
 
-**Active phase**: Phase 6 — Launch Polish (`v0.4.0`). Phases 0–5 are complete in code/plans and `phase-5-context-assembly/` is done; `v0.3.0` is prepared (private notes-only; tag/publish pending separate authorization); `v0.1.0` and `v0.2.0` are tagged + released (private); the public flip is deferred to launch (`v0.4.0`). Next: execute from the [`phase-6-launch-polish/`](phase-6-launch-polish/README.md) task list.
+**Active phase**: Phase 6 — Launch Polish (`v0.4.0`) local-first closeout. Phases 0–6 are complete in local implementation scope; `v0.3.0` is prepared (private notes-only; tag/publish pending separate authorization); `v0.1.0` and `v0.2.0` are tagged + released (private); the public flip is deferred to explicit `6.6 go public` authorization. Next: run the final local gate, push the Phase 6 branch, open one PR, and review/fix comments before any release action.
 
 ---
 
@@ -51,8 +51,8 @@ Each phase has a `phase-N/README.md` with the full task list. Phases 0–5 have 
 **Tasks**: 13 — 11 with per-task files (`01`–`09`, `12`, `13`); 5.10/5.11 folded into 4.4 ([`phase-5-context-assembly/README.md`](phase-5-context-assembly/README.md))
 
 ### Phase 6 — Launch Polish (`v0.4.0`)
-**Goal**: `vektor init` writes MCP config for Claude Code/Cursor/Codex. Signed release pipeline on tag push. 20-query benchmark vs tokio prints to `BENCHMARKS.md`. Public `v0.4.0` release.
-**Tasks**: ~5 ([`phase-6-launch-polish/README.md`](phase-6-launch-polish/README.md))
+**Goal**: `vektor init` writes MCP config for Claude Code/Cursor/Codex. Signed release pipeline is scaffolded for tag push. 20-query benchmark prints to `BENCHMARKS.md`. Release notes/checklist are ready; public `v0.4.0` release remains an authorization gate.
+**Tasks**: 5 local-first tasks + deferred `6.6 go public` ([`phase-6-launch-polish/README.md`](phase-6-launch-polish/README.md))
 
 ---
 
@@ -143,22 +143,27 @@ docs/plans/initial/
 │   ├── 12-warmup.md
 │   └── 13-stage5-integration.md
 └── phase-6-launch-polish/
-    └── README.md
+    ├── README.md
+    ├── 01-vektor-init.md
+    ├── 02-release-pipeline.md
+    ├── 03-lightweight-benchmark-gate.md
+    ├── 04-benchmarks-baseline.md
+    └── 05-v0-4-release.md
 ```
 
 ---
 
 ## Pre-planned vs just-in-time
 
-Phases 0, 1, 2, 3, and 4 are **planned at the task level** and **complete** (Phases 2/3 published privately as `v0.2.0` / `v0.3.0`-prep; Phase 4 merged to main as an interim phase with no tag). Phase 5 is the active surface.
+Phases 0, 1, 2, 3, 4, 5, and 6 are **planned at the task level** and **complete in local implementation scope** (Phases 2/3 published or prepared privately as `v0.2.0` / `v0.3.0`-prep; Phase 4 merged to main as an interim phase with no tag; Phase 6 awaits final local gate/PR/release authorization).
 
-Phase 6 remains **planned at the phase level** with a task list only. Per-task files are written **just before each phase begins** so that:
+Per-task files are written **just before each phase begins** so that:
 
 1. Lessons from earlier phases inform later tasks (we won't pre-write task 5.7 today based on assumptions we'll find wrong in Phase 4)
 2. The plan stays a *tool*, not a stale document
 3. Reviewers can validate the format on Phases 0/1 before we commit to per-task details for all 50+ tasks
 
-The Phase 2 task files were expanded during `1.7a` release prep. The Phase 3 task files were expanded after the private `v0.2.0` publish gate. The Phase 4 task files were expanded by task 3.12 (Phase 3 closure). The Phase 5 task files were expanded as the Phase 4 closure step (task 4.8's final deliverable); Phase 6 remains phase-level until Phase 5 closes.
+The Phase 2 task files were expanded during `1.7a` release prep. The Phase 3 task files were expanded after the private `v0.2.0` publish gate. The Phase 4 task files were expanded by task 3.12 (Phase 3 closure). The Phase 5 task files were expanded as the Phase 4 closure step (task 4.8's final deliverable). The Phase 6 task files were expanded and executed as the local-first launch-polish batch.
 
 ---
 
