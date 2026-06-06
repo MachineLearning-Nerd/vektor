@@ -10,7 +10,7 @@ use toml::{Table as TomlTable, Value as TomlValue};
 use crate::error::{Result, VektorError};
 
 #[derive(clap::Args, Debug, Clone)]
-pub(crate) struct InitArgs {
+pub struct InitArgs {
     /// Agent config to update. Defaults to all supported agents.
     #[arg(long, value_enum)]
     pub(crate) agent: Option<InitAgent>,

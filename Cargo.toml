@@ -93,3 +93,7 @@ wiremock = "0.6"
 
 # Phase 2 (uncomment when needed)
 # git2 = "0.21"
+
+[[bench]]
+name = "retrieval_quality"
+harness = false
