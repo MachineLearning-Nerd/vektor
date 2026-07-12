@@ -18,6 +18,8 @@
 | 6.3 | Lightweight benchmark gate — 20 hand-labeled queries against tokio's source, run via `cargo bench`, output to `BENCHMARKS.md` | M | 5.13 | ✅ Done — checked-in tokio fixture + report-only runner |
 | 6.4 | `BENCHMARKS.md` baseline — initial commit + CI step that posts benchmark deltas on PRs | S | 6.3 | ✅ Done — baseline + informational PR delta workflow |
 | 6.5 | `v0.4.0` release readiness docs + authorization checklist | M | 5.13, 6.1, 6.2, 6.4 | ✅ Done — docs/checklist only; tag/publish deferred |
+| 6.7 | Embedding throughput investigation — profile the ~194 ms/chunk cold-index embed cost (ONNX threads, batch size) found by the scale-test harness; measure-first | M | 6.3 | ⬜ Not started — not a v0.4.0 blocker |
+| 6.8 | Chunk size vs embedder window alignment — 200-line chunks truncate at bge-small's 512 tokens, so lite embeddings are head-only; decide sub-chunk / accept / window-pool with benchmark evidence | M | 6.3, 6.7 | ⬜ Not started — not a v0.4.0 blocker |
 
 ---
 
@@ -53,6 +55,7 @@ These are not part of the local-first implementation batch:
 - **Benchmark labeling**: this is the 20-query subset from C1 (full corpus is Stage 3 / 150 queries). For v0.4.0, picking 20 queries against tokio gives a representative baseline without requiring 2 weeks of labeling work. Lift to 50/repo and add 3 repos in Stage 3.
 - **Per-PR benchmark gate**: at v0.4.0, the benchmark just reports — it doesn't block PRs. Strict regression-gating is a Stage 6 (C8.4) feature once we have multiple data points to calibrate "what is a real regression."
 - **Crate-name gate**: the deferred decision (`vektor` is taken on crates.io) is documented in `release-checklist-v0.4.0.md`. It blocks crates.io publish only; it does not block the local-first PR.
+- **Scale-test follow-ups (6.7/6.8)**: added 2026-07-12 after `scripts/scale-test.sh` runs against real repos exposed an untruncated-sequence embedding crash (fixed, `0d222b0`) and Lance version churn (fixed, `e94ca54`). 6.7 (throughput) and 6.8 (chunk/window quality) are the remaining items; 6.6 stays reserved for the go-public action. Neither blocks `v0.4.0` under the current exit criteria, but 6.8 affects lite-model retrieval quality — reconsider scope if lite is the recommended first-run path at launch.
 
 ---
 
