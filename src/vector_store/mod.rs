@@ -17,7 +17,7 @@
 //! errors. Do not add a direct arrow dependency. See PRD §11.
 
 use std::{
-    collections::HashMap,
+    collections::{HashMap, HashSet},
     fs,
     path::{Path, PathBuf},
     sync::Arc,
@@ -33,6 +33,7 @@ use lancedb::{
     arrow::arrow_schema::{DataType, Field, Schema, SchemaRef},
     connect,
     query::{ExecutableQuery, QueryBase, Select},
+    table::{CompactionOptions, OptimizeAction},
 };
 use serde::{Deserialize, Serialize};
 
@@ -483,19 +484,40 @@ impl VectorStore {
     /// mutates rows or metadata, which is what makes it safe to call *before*
     /// `delete_by_file`. This is also the result-`RecordBatch` column-extraction
     /// pattern that 3.8 (search) reuses to read columns back out.
+    ///
+    /// Single-file convenience over [`Self::existing_embeddings_for_files`];
+    /// production index runs use the batched form directly (test-only today,
+    /// retained for the future single-file watcher path).
+    #[allow(dead_code)]
     pub(crate) async fn existing_embeddings_by_content_hash(
         &self,
         rel_path: &str,
     ) -> Result<HashMap<String, Vec<f32>>> {
-        let predicate = format!("rel_path = '{}'", escape_sql_string_literal(rel_path));
+        self.existing_embeddings_for_files(&[rel_path]).await
+    }
+
+    /// Batched variant of [`Self::existing_embeddings_by_content_hash`]: load
+    /// the existing embeddings for MANY files in a single query, flattened into
+    /// one `content_hash → vector` map.
+    ///
+    /// Flattening across files is sound because reuse is content-addressed:
+    /// identical content hashes to the same value and must embed to the same
+    /// vector, regardless of which file it lives in. This also lets a batch
+    /// reuse a vector across files (moved/duplicated code embeds zero times).
+    ///
+    /// An empty `rel_paths` returns an empty map without querying.
+    pub(crate) async fn existing_embeddings_for_files(
+        &self,
+        rel_paths: &[&str],
+    ) -> Result<HashMap<String, Vec<f32>>> {
+        if rel_paths.is_empty() {
+            return Ok(HashMap::new());
+        }
 
         let table = self.chunks_table().await?;
         let stream = table
             .query()
-            .only_if(predicate)
-            // Read only the two columns the cache needs (content reuse key +
-            // the vector to reuse). Selecting fewer columns is the documented
-            // best practice for LanceDB's columnar reads.
+            .only_if(rel_paths_in_predicate(rel_paths))
             .select(Select::Columns(vec![
                 "content_hash".to_string(),
                 "vector".to_string(),
@@ -504,77 +526,12 @@ impl VectorStore {
             .await
             .map_err(|e| VektorError::Storage(e.to_string()))?;
 
-        // Collect the result stream into in-memory batches. `SendableRecordBatchStream`
-        // is `Stream<Item = Result<RecordBatch>>`, so `try_collect` yields the
-        // batches or short-circuits on the first storage error.
         let batches: Vec<RecordBatch> = stream
             .try_collect()
             .await
             .map_err(|e| VektorError::Storage(e.to_string()))?;
 
-        let mut out: HashMap<String, Vec<f32>> = HashMap::new();
-        for batch in &batches {
-            // Extract the two selected columns by NAME (not position): `select`
-            // returns columns in the requested order, but reading by name is
-            // robust to that and self-documenting.
-            let hashes = batch
-                .column_by_name("content_hash")
-                .ok_or_else(|| {
-                    VektorError::Storage("query result missing content_hash column".into())
-                })?
-                .as_any()
-                .downcast_ref::<StringArray>()
-                .ok_or_else(|| {
-                    VektorError::Storage("content_hash column is not a Utf8 StringArray".into())
-                })?;
-
-            let vectors = batch
-                .column_by_name("vector")
-                .ok_or_else(|| VektorError::Storage("query result missing vector column".into()))?
-                .as_any()
-                .downcast_ref::<FixedSizeListArray>()
-                .ok_or_else(|| {
-                    VektorError::Storage("vector column is not a FixedSizeListArray".into())
-                })?;
-
-            for row in 0..batch.num_rows() {
-                if hashes.is_null(row) {
-                    return Err(VektorError::Storage(
-                        "unexpected null content_hash in chunks table".into(),
-                    ));
-                }
-                let content_hash = hashes.value(row).to_string();
-
-                // Reconstruct the per-row `Vec<f32>` from the FixedSizeList: each
-                // list cell is itself an array; downcast that inner array to a
-                // Float32Array and copy its values out.
-                let cell = vectors.value(row);
-                let floats = cell
-                    .as_any()
-                    .downcast_ref::<Float32Array>()
-                    .ok_or_else(|| {
-                        VektorError::Storage("vector list items are not Float32".into())
-                    })?;
-                let vector: Vec<f32> = floats.values().to_vec();
-
-                // First write wins for duplicate content hashes within this file;
-                // identical content ⇒ identical embedding, so either is fine.
-                match out.entry(content_hash) {
-                    std::collections::hash_map::Entry::Vacant(e) => {
-                        e.insert(vector);
-                    }
-                    std::collections::hash_map::Entry::Occupied(e) => {
-                        tracing::debug!(
-                            rel_path,
-                            content_hash = e.key().as_str(),
-                            "duplicate content_hash within file; keeping first vector"
-                        );
-                    }
-                }
-            }
-        }
-
-        Ok(out)
+        hash_vector_map_from_batches(&batches)
     }
 
     /// Delete every chunk row whose `rel_path` exactly equals `rel_path`.
@@ -590,25 +547,13 @@ impl VectorStore {
     /// the metadata is persisted (so ANN-rebuild churn logic can use it).
     ///
     /// Returns the number of rows deleted (from LanceDB's `DeleteResult`).
+    ///
+    /// Single-file convenience over [`Self::delete_by_files`]; production
+    /// index runs use the batched form directly (test-only today, retained
+    /// for the future single-file watcher path).
+    #[allow(dead_code)]
     pub(crate) async fn delete_by_file(&mut self, rel_path: &str) -> Result<usize> {
-        let predicate = format!("rel_path = '{}'", escape_sql_string_literal(rel_path));
-
-        let table = self.chunks_table().await?;
-        let result = table
-            .delete(&predicate)
-            .await
-            .map_err(|e| VektorError::Storage(e.to_string()))?;
-
-        let deleted = result.num_deleted_rows as usize;
-        if deleted > 0 {
-            self.meta.chunks_deleted_since = self
-                .meta
-                .chunks_deleted_since
-                .saturating_add(result.num_deleted_rows);
-            self.meta.save(&self.meta_path)?;
-        }
-
-        Ok(deleted)
+        self.delete_by_files(&[rel_path]).await
     }
 
     /// Re-index a single file: refresh ALL of its rows to match `chunks`.
@@ -635,6 +580,11 @@ impl VectorStore {
     /// The old rows are still deleted (an emptied/secret-only file must not keep
     /// stale vectors), nothing is inserted, and the returned [`ReindexStats`] is all
     /// zero. This is NOT an error.
+    /// Single-file convenience wrapper over [`Self::reindex_files`] — same
+    /// read-cache → delete → embed → insert contract, batch size 1. Production
+    /// full-index runs batch many files per call; this remains the primitive
+    /// for tests and the future single-file watcher path.
+    #[allow(dead_code)]
     pub(crate) async fn reindex_file(
         &mut self,
         rel_path: &str,
@@ -642,25 +592,177 @@ impl VectorStore {
         embedder: &dyn crate::embedder::Embedder,
         last_modified: i64,
     ) -> Result<ReindexStats> {
+        self.reindex_files(
+            &[FileToReindex {
+                rel_path,
+                chunks,
+                last_modified,
+            }],
+            embedder,
+        )
+        .await
+    }
+
+    /// Delete every chunk row belonging to ANY of `rel_paths`, in ONE Lance
+    /// write transaction (`rel_path IN (...)`). Matching per path is exact,
+    /// same escaping contract as [`Self::delete_by_file`].
+    ///
+    /// An empty `rel_paths` is a no-op returning `0` — no predicate, no
+    /// version churn.
+    pub(crate) async fn delete_by_files(&mut self, rel_paths: &[&str]) -> Result<usize> {
+        if rel_paths.is_empty() {
+            return Ok(0);
+        }
+
+        let table = self.chunks_table().await?;
+        let result = table
+            .delete(&rel_paths_in_predicate(rel_paths))
+            .await
+            .map_err(|e| VektorError::Storage(e.to_string()))?;
+
+        let deleted = result.num_deleted_rows as usize;
+        if deleted > 0 {
+            self.meta.chunks_deleted_since = self
+                .meta
+                .chunks_deleted_since
+                .saturating_add(result.num_deleted_rows);
+            self.meta.save(&self.meta_path)?;
+        }
+
+        Ok(deleted)
+    }
+
+    /// Re-index a BATCH of files in a bounded number of Lance transactions.
+    ///
+    /// This is the multi-file counterpart of [`Self::reindex_file`] and the
+    /// hot path for full-index runs. Per-file reindexing commits two Lance
+    /// versions per file (delete + insert), which is O(n²)-shaped as the
+    /// version chain and fragment count grow with every file; a 10K-file run
+    /// would commit ~20K versions. This method keeps the same
+    /// read-cache → delete → embed → insert contract but performs each step
+    /// ONCE for the whole batch:
+    ///
+    /// 1. **Read cache** ([`Self::existing_embeddings_for_files`]) — one query
+    ///    for all files' vectors, flattened by `content_hash` (content reuse
+    ///    is file-agnostic, so cross-file duplicates embed zero times).
+    /// 2. **Delete** ([`Self::delete_by_files`]) — one `rel_path IN (...)`
+    ///    transaction for the whole batch. Files with empty `chunks` still
+    ///    participate (their stale rows must go).
+    /// 3. **Embed** — cache-miss texts across ALL files, deduplicated by
+    ///    `content_hash`, in a single `embed_documents` call (the embedder
+    ///    batches internally).
+    /// 4. **Insert** — rows for all files via [`Self::insert_chunks`] in
+    ///    batches of at most [`INSERT_BATCH`] rows.
+    ///
+    /// Returned [`ReindexStats`] preserve the per-chunk invariant
+    /// `reused + embedded == chunks`, where `reused` counts chunks whose
+    /// vector came from the store and `embedded` counts chunks that were not
+    /// in the store (even when deduplication meant fewer embedder texts).
+    pub(crate) async fn reindex_files(
+        &mut self,
+        files: &[FileToReindex<'_>],
+        embedder: &dyn crate::embedder::Embedder,
+    ) -> Result<ReindexStats> {
+        if files.is_empty() {
+            return Ok(ReindexStats::default());
+        }
+
+        let rel_paths: Vec<&str> = files.iter().map(|f| f.rel_path).collect();
+
         // 1. Read existing vectors BEFORE deleting (read-before-delete invariant).
-        let cache = self.existing_embeddings_by_content_hash(rel_path).await?;
+        let mut cache = self.existing_embeddings_for_files(&rel_paths).await?;
 
-        // 2. Delete the file's existing rows (delete-then-insert).
-        self.delete_by_file(rel_path).await?;
+        // 2. One delete transaction for the whole batch.
+        self.delete_by_files(&rel_paths).await?;
 
-        // 3. Plan the reuse/embed split. Empty chunks => no embedder call, no rows.
-        let (rows, plan) = plan_reindex(chunks, &cache, embedder, last_modified).await?;
+        // 3. Collect cache misses across all files, deduplicated by content
+        //    hash, and embed them in one call. Counts are taken against the
+        //    ORIGINAL cache so `reused` means "vector came from the store".
+        let mut reused = 0usize;
+        let mut embedded = 0usize;
+        let mut queued: HashSet<&str> = HashSet::new();
+        let mut miss_hashes: Vec<String> = Vec::new();
+        let mut miss_texts: Vec<String> = Vec::new();
+        for file in files {
+            for chunk in file.chunks {
+                if cache.contains_key(&chunk.content_hash) {
+                    reused += 1;
+                } else {
+                    embedded += 1;
+                    if queued.insert(chunk.content_hash.as_str()) {
+                        miss_hashes.push(chunk.content_hash.clone());
+                        miss_texts.push(chunk.content.clone());
+                    }
+                }
+            }
+        }
 
-        // 4. Insert in bounded batches (<= INSERT_BATCH rows per RecordBatch).
+        if !miss_texts.is_empty() {
+            let vectors = embedder.embed_documents(&miss_texts).await?;
+            if vectors.len() != miss_texts.len() {
+                return Err(VektorError::Storage(format!(
+                    "embedder returned {} vectors for {} texts",
+                    vectors.len(),
+                    miss_texts.len(),
+                )));
+            }
+            for (hash, vector) in miss_hashes.into_iter().zip(vectors) {
+                cache.insert(hash, vector);
+            }
+        }
+
+        // 4. Build rows per file against the now-complete cache (zero embedder
+        //    calls inside plan_reindex) and insert in bounded batches.
+        let mut rows: Vec<ChunkRow> = Vec::new();
+        for file in files {
+            let (file_rows, _plan) =
+                plan_reindex(file.chunks, &cache, embedder, file.last_modified).await?;
+            rows.extend(file_rows);
+        }
         for batch in rows.chunks(INSERT_BATCH) {
             self.insert_chunks(batch).await?;
         }
 
         Ok(ReindexStats {
             chunks: rows.len(),
-            embedded: plan.embedded,
-            reused: plan.reused,
+            embedded,
+            reused,
         })
+    }
+
+    /// Compact small fragments and prune superseded dataset versions.
+    ///
+    /// LanceDB is copy-on-write: every delete/insert commits a new immutable
+    /// version and leaves the old one on disk. An index run over many files
+    /// accrues hundreds of versions and fragments, which bloats disk (~10x)
+    /// and slows every subsequent open/scan. Call this once at the END of an
+    /// index run — never per file.
+    ///
+    /// `delete_unverified: true` prunes versions younger than Lance's 7-day
+    /// safety window too. That is safe here because Vektor's store is
+    /// single-process per project (CLI one-shot or one MCP server; concurrent
+    /// writers are already unsupported — state.db would contend first).
+    pub(crate) async fn optimize(&mut self) -> Result<()> {
+        let table = self.chunks_table().await?;
+
+        table
+            .optimize(OptimizeAction::Compact {
+                options: CompactionOptions::default(),
+                remap_options: None,
+            })
+            .await
+            .map_err(|e| VektorError::Storage(format!("lance compaction failed: {e}")))?;
+
+        table
+            .optimize(OptimizeAction::Prune {
+                older_than: Some(lancedb::table::optimize::Duration::zero()),
+                delete_unverified: Some(true),
+                error_if_tagged_old_versions: Some(false),
+            })
+            .await
+            .map_err(|e| VektorError::Storage(format!("lance version prune failed: {e}")))?;
+
+        Ok(())
     }
 
     // ---------------------------------------------------------------------------
@@ -914,6 +1016,88 @@ fn search_results_from_batches(
 // ---------------------------------------------------------------------------
 // 3.7b — Reindex reuse planner
 // ---------------------------------------------------------------------------
+
+/// One file's input to [`VectorStore::reindex_files`]: its exact path, the
+/// chunks that should replace its rows, and the mtime stamped on each row.
+/// Borrowed views — the CLI's pending-file list owns the data.
+pub(crate) struct FileToReindex<'a> {
+    pub(crate) rel_path: &'a str,
+    pub(crate) chunks: &'a [crate::chunker::Chunk],
+    pub(crate) last_modified: i64,
+}
+
+/// Build an exact-match `rel_path IN ('a', 'b', ...)` predicate, escaping every
+/// path via [`escape_sql_string_literal`] (same contract as the single-file
+/// `rel_path = '...'` predicates).
+fn rel_paths_in_predicate(rel_paths: &[&str]) -> String {
+    let escaped: Vec<String> = rel_paths
+        .iter()
+        .map(|p| format!("'{}'", escape_sql_string_literal(p)))
+        .collect();
+    format!("rel_path IN ({})", escaped.join(", "))
+}
+
+/// Extract a `content_hash → vector` map from query result batches holding the
+/// `content_hash` and `vector` columns (the read half of read-before-delete).
+///
+/// Columns are read by NAME (not position) — robust and self-documenting.
+/// First write wins for duplicate content hashes; identical content ⇒
+/// identical embedding, so the choice is immaterial.
+fn hash_vector_map_from_batches(batches: &[RecordBatch]) -> Result<HashMap<String, Vec<f32>>> {
+    let mut out: HashMap<String, Vec<f32>> = HashMap::new();
+    for batch in batches {
+        let hashes = batch
+            .column_by_name("content_hash")
+            .ok_or_else(|| VektorError::Storage("query result missing content_hash column".into()))?
+            .as_any()
+            .downcast_ref::<StringArray>()
+            .ok_or_else(|| {
+                VektorError::Storage("content_hash column is not a Utf8 StringArray".into())
+            })?;
+
+        let vectors = batch
+            .column_by_name("vector")
+            .ok_or_else(|| VektorError::Storage("query result missing vector column".into()))?
+            .as_any()
+            .downcast_ref::<FixedSizeListArray>()
+            .ok_or_else(|| {
+                VektorError::Storage("vector column is not a FixedSizeListArray".into())
+            })?;
+
+        for row in 0..batch.num_rows() {
+            if hashes.is_null(row) {
+                return Err(VektorError::Storage(
+                    "unexpected null content_hash in chunks table".into(),
+                ));
+            }
+            let content_hash = hashes.value(row).to_string();
+
+            // Reconstruct the per-row `Vec<f32>` from the FixedSizeList: each
+            // list cell is itself an array; downcast that inner array to a
+            // Float32Array and copy its values out.
+            let cell = vectors.value(row);
+            let floats = cell
+                .as_any()
+                .downcast_ref::<Float32Array>()
+                .ok_or_else(|| VektorError::Storage("vector list items are not Float32".into()))?;
+            let vector: Vec<f32> = floats.values().to_vec();
+
+            match out.entry(content_hash) {
+                std::collections::hash_map::Entry::Vacant(e) => {
+                    e.insert(vector);
+                }
+                std::collections::hash_map::Entry::Occupied(e) => {
+                    tracing::debug!(
+                        content_hash = e.key().as_str(),
+                        "duplicate content_hash in read-cache query; keeping first vector"
+                    );
+                }
+            }
+        }
+    }
+
+    Ok(out)
+}
 
 /// Per-file outcome of [`VectorStore::reindex_file`].
 ///
@@ -2762,5 +2946,291 @@ mod tests {
 
         assert_eq!(results.len(), 1, "filter keeps only src/a.rs");
         assert_eq!(results[0].rel_path, "src/a.rs");
+    }
+
+    // -----------------------------------------------------------------------
+    // 6.x — batched multi-file reindex (`reindex_files`) + `optimize`
+    // -----------------------------------------------------------------------
+
+    /// Count Lance version manifests under the store's `lance/` dir. Every
+    /// LanceDB write (delete/insert/compact) commits one new version, so this
+    /// is the observable proxy for "how many write transactions happened".
+    fn manifest_count(dir: &Path) -> usize {
+        let mut count = 0;
+        let Ok(entries) = fs::read_dir(dir) else {
+            return 0;
+        };
+        for entry in entries.flatten() {
+            let path = entry.path();
+            if path.is_dir() {
+                count += manifest_count(&path);
+            } else if path.extension().is_some_and(|e| e == "manifest") {
+                count += 1;
+            }
+        }
+        count
+    }
+
+    fn batch_files(count: usize) -> Vec<(String, Vec<Chunk>)> {
+        (0..count)
+            .map(|i| {
+                let rel_path = format!("src/file{i}.rs");
+                let chunks = vec![
+                    make_chunk(
+                        &format!("f{i}-c1"),
+                        &format!("fn alpha{i}() {{}}"),
+                        &format!("h-{i}-alpha"),
+                        &rel_path,
+                        1,
+                        3,
+                        Some(Language::Rust),
+                    ),
+                    make_chunk(
+                        &format!("f{i}-c2"),
+                        &format!("fn beta{i}() {{}}"),
+                        &format!("h-{i}-beta"),
+                        &rel_path,
+                        4,
+                        6,
+                        Some(Language::Rust),
+                    ),
+                ];
+                (rel_path, chunks)
+            })
+            .collect()
+    }
+
+    #[tokio::test]
+    async fn reindex_files_batch_bounds_lance_versions_and_inserts_all_rows() {
+        let project = tempfile::tempdir().expect("project");
+        let data_dir = tempfile::tempdir().expect("data dir");
+        let config = config_with_data_dir(data_dir.path());
+        let embedder = CountingEmbedder::new(DIM);
+
+        let mut store = VectorStore::new(project.path(), &config, DIM, MODEL)
+            .await
+            .expect("create store");
+
+        let owned = batch_files(10);
+        let files: Vec<FileToReindex<'_>> = owned
+            .iter()
+            .map(|(rel_path, chunks)| FileToReindex {
+                rel_path,
+                chunks,
+                last_modified: 42,
+            })
+            .collect();
+
+        let stats = store
+            .reindex_files(&files, &embedder)
+            .await
+            .expect("batch reindex");
+
+        assert_eq!(stats.chunks, 20, "one row per input chunk");
+        assert_eq!(stats.embedded, 20, "all chunks are new");
+        assert_eq!(stats.reused, 0);
+        assert_eq!(embedder.texts_embedded(), 20);
+        assert_eq!(count_for_path(&store, "src/file0.rs").await, 2);
+        assert_eq!(count_for_path(&store, "src/file9.rs").await, 2);
+
+        // The whole batch must land in a bounded number of Lance write
+        // transactions (create table + one delete + bounded inserts), NOT
+        // one delete+insert pair per file (~20+ versions for 10 files).
+        let versions = manifest_count(store.lance_dir());
+        assert!(
+            versions <= 5,
+            "expected a bounded number of Lance versions for a 10-file batch, got {versions}"
+        );
+    }
+
+    #[tokio::test]
+    async fn reindex_files_second_pass_reuses_all_vectors() {
+        let project = tempfile::tempdir().expect("project");
+        let data_dir = tempfile::tempdir().expect("data dir");
+        let config = config_with_data_dir(data_dir.path());
+        let embedder = CountingEmbedder::new(DIM);
+
+        let mut store = VectorStore::new(project.path(), &config, DIM, MODEL)
+            .await
+            .expect("create store");
+
+        let owned = batch_files(3);
+        let files: Vec<FileToReindex<'_>> = owned
+            .iter()
+            .map(|(rel_path, chunks)| FileToReindex {
+                rel_path,
+                chunks,
+                last_modified: 1,
+            })
+            .collect();
+
+        store
+            .reindex_files(&files, &embedder)
+            .await
+            .expect("first batch reindex");
+        assert_eq!(embedder.texts_embedded(), 6);
+
+        let stats = store
+            .reindex_files(&files, &embedder)
+            .await
+            .expect("second batch reindex");
+
+        assert_eq!(stats.embedded, 0, "unchanged batch embeds nothing");
+        assert_eq!(stats.reused, 6);
+        assert_eq!(
+            embedder.texts_embedded(),
+            6,
+            "no further embedder texts on unchanged second pass"
+        );
+        assert_eq!(count_for_path(&store, "src/file1.rs").await, 2);
+    }
+
+    #[tokio::test]
+    async fn reindex_files_embeds_identical_new_content_once_across_files() {
+        let project = tempfile::tempdir().expect("project");
+        let data_dir = tempfile::tempdir().expect("data dir");
+        let config = config_with_data_dir(data_dir.path());
+        let embedder = CountingEmbedder::new(DIM);
+
+        let mut store = VectorStore::new(project.path(), &config, DIM, MODEL)
+            .await
+            .expect("create store");
+
+        // Two different files containing IDENTICAL content (same content_hash).
+        // Content-addressed reuse means one embedding serves both rows.
+        let chunks_a = vec![make_chunk(
+            "a-c1",
+            "fn same() {}",
+            "h-same",
+            "src/a.rs",
+            1,
+            3,
+            None,
+        )];
+        let chunks_b = vec![make_chunk(
+            "b-c1",
+            "fn same() {}",
+            "h-same",
+            "src/b.rs",
+            1,
+            3,
+            None,
+        )];
+        let files = vec![
+            FileToReindex {
+                rel_path: "src/a.rs",
+                chunks: &chunks_a,
+                last_modified: 1,
+            },
+            FileToReindex {
+                rel_path: "src/b.rs",
+                chunks: &chunks_b,
+                last_modified: 1,
+            },
+        ];
+
+        let stats = store
+            .reindex_files(&files, &embedder)
+            .await
+            .expect("batch reindex");
+
+        assert_eq!(stats.chunks, 2, "one row per file");
+        assert_eq!(
+            embedder.texts_embedded(),
+            1,
+            "identical content across the batch embeds exactly once"
+        );
+        assert_eq!(count_for_path(&store, "src/a.rs").await, 1);
+        assert_eq!(count_for_path(&store, "src/b.rs").await, 1);
+    }
+
+    #[tokio::test]
+    async fn reindex_files_empty_chunks_still_deletes_stale_rows() {
+        let project = tempfile::tempdir().expect("project");
+        let data_dir = tempfile::tempdir().expect("data dir");
+        let config = config_with_data_dir(data_dir.path());
+        let embedder = CountingEmbedder::new(DIM);
+
+        let mut store = VectorStore::new(project.path(), &config, DIM, MODEL)
+            .await
+            .expect("create store");
+
+        let chunks = vec![make_chunk(
+            "c1",
+            "fn gone() {}",
+            "h-gone",
+            "src/a.rs",
+            1,
+            3,
+            None,
+        )];
+        store
+            .reindex_file("src/a.rs", &chunks, &embedder, 1)
+            .await
+            .expect("seed rows");
+        assert_eq!(count_for_path(&store, "src/a.rs").await, 1);
+
+        // The file emptied (e.g. all chunks became secret-only): its stale
+        // rows must be deleted even though nothing is inserted.
+        let files = vec![FileToReindex {
+            rel_path: "src/a.rs",
+            chunks: &[],
+            last_modified: 2,
+        }];
+        let stats = store
+            .reindex_files(&files, &embedder)
+            .await
+            .expect("empty batch reindex");
+
+        assert_eq!(stats.chunks, 0);
+        assert_eq!(
+            count_for_path(&store, "src/a.rs").await,
+            0,
+            "stale rows gone"
+        );
+    }
+
+    #[tokio::test]
+    async fn optimize_compacts_fragments_and_prunes_old_versions() {
+        let project = tempfile::tempdir().expect("project");
+        let data_dir = tempfile::tempdir().expect("data dir");
+        let config = config_with_data_dir(data_dir.path());
+        let embedder = CountingEmbedder::new(DIM);
+
+        let mut store = VectorStore::new(project.path(), &config, DIM, MODEL)
+            .await
+            .expect("create store");
+
+        // Per-file reindexing accrues one version per delete/insert — the
+        // pathological pattern optimize() must clean up after.
+        let owned = batch_files(6);
+        for (rel_path, chunks) in &owned {
+            store
+                .reindex_file(rel_path, chunks, &embedder, 1)
+                .await
+                .expect("per-file reindex");
+        }
+        let versions_before = manifest_count(store.lance_dir());
+        assert!(
+            versions_before >= 7,
+            "per-file writes should accrue many versions, got {versions_before}"
+        );
+
+        store.optimize().await.expect("optimize");
+
+        let versions_after = manifest_count(store.lance_dir());
+        assert!(
+            versions_after < versions_before,
+            "optimize must prune old versions ({versions_before} -> {versions_after})"
+        );
+
+        // Data must survive compaction + pruning intact.
+        for i in 0..6 {
+            assert_eq!(
+                count_for_path(&store, &format!("src/file{i}.rs")).await,
+                2,
+                "rows intact after optimize (file{i})"
+            );
+        }
     }
 }
