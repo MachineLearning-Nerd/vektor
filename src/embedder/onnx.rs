@@ -198,11 +198,13 @@ impl OnnxEmbedder {
     /// `block_in_place` so this never starves the async runtime (see `embed`).
     fn embed_batch(&self, texts: &[String]) -> Result<Vec<Vec<f32>>> {
         debug_assert!(texts.len() <= MAX_BATCH_SIZE);
+        let batch_started = std::time::Instant::now();
 
         let encodings = self
             .tokenizer
             .encode_batch(texts.to_vec(), true)
             .map_err(|error| VektorError::Embedding(format!("tokenization failed: {error}")))?;
+        let tokenize_ms = batch_started.elapsed().as_millis();
 
         // Pad every row to the batch's longest sequence so the tensor is
         // rectangular. `seq_len >= 1` keeps tensor construction valid even if a
@@ -232,6 +234,7 @@ impl OnnxEmbedder {
         let mask_tensor = Tensor::<i64>::from_array((shape.clone(), attention_mask.clone()))
             .map_err(ort_err("build attention_mask tensor"))?;
 
+        let forward_started = std::time::Instant::now();
         let mut session = self
             .session
             .lock()
@@ -276,11 +279,24 @@ impl OnnxEmbedder {
 
         // Pool into a fresh buffer (copies out of the borrowed `data`), then
         // normalize per row. `outputs`/`session` stay borrowed until scope end.
+        let forward_ms = forward_started.elapsed().as_millis();
         let pooled = mean_pool(data, &attention_mask, rows, seq_len, hidden);
         let mut vectors: Vec<Vec<f32>> = pooled.chunks_exact(hidden).map(<[f32]>::to_vec).collect();
         for vector in &mut vectors {
             l2_normalize(vector);
         }
+
+        // 6.7 throughput profile: per-stage cost of this batch. `seq_len` is
+        // the padded width every row paid — the number that explains most
+        // per-batch cost variance (attention is O(seq_len²)).
+        tracing::debug!(
+            rows,
+            seq_len,
+            tokenize_ms,
+            forward_ms,
+            total_ms = batch_started.elapsed().as_millis(),
+            "embed_batch profile"
+        );
         Ok(vectors)
     }
 }
@@ -581,6 +597,12 @@ fn build_session(onnx_path: &Path) -> Result<Session> {
         .map(std::num::NonZeroUsize::get)
         .unwrap_or(1);
 
+    // CPU execution provider ONLY — CoreML was tried and rejected for this
+    // workload (6.7, 2026-07-12): embedding batches vary in [batch, seq_len]
+    // shape, and CoreML recompiles per shape — ~3min session-init stall, then
+    // 224.6 ms/text on SHORT texts (7.5x slower than CPU's 30 ms/text) before
+    // aborting mid-profile. Revisit only with fixed-shape inputs (pad to
+    // static buckets) or for the quantized-model task.
     Session::builder()
         .map_err(ort_err("create session builder"))?
         .with_execution_providers([ort::ep::CPU::default().build()])
@@ -996,6 +1018,60 @@ mod tests {
         // Jina v2 base code is 768-dim; assertion is informational.
         assert!(embedder.dim() == 768 || embedder.dim() == 384);
         assert_eq!(embedder.name(), config.embedding.onnx_model);
+    }
+
+    /// 6.7 throughput profile — prints per-sequence-length embed cost so the
+    /// task can attribute ms/chunk. Env overrides for the scale-test bench
+    /// setup: `VEKTOR_TEST_DATA_DIR` (model location) and
+    /// `VEKTOR_TEST_ONNX_MODEL` (model repo id).
+    ///
+    /// Run manually (release: debug-build ONNX numbers are misleading):
+    /// `VEKTOR_TEST_DATA_DIR=~/vektor-bench/data \
+    ///  VEKTOR_TEST_ONNX_MODEL=BAAI/bge-small-en-v1.5 \
+    ///  cargo test --release onnx_embedder_throughput -- --ignored --nocapture`
+    #[test]
+    #[ignore = "requires a downloaded model; run manually (see doc comment)"]
+    fn onnx_embedder_throughput_profile() {
+        let mut config = Config::default();
+        if let Ok(dir) = std::env::var("VEKTOR_TEST_DATA_DIR") {
+            config.index.data_dir = dir;
+        }
+        if let Ok(model) = std::env::var("VEKTOR_TEST_ONNX_MODEL") {
+            config.embedding.onnx_model = model;
+        }
+        let embedder = OnnxEmbedder::new(&config).expect("construct onnx embedder");
+
+        // Synthetic code-like texts at three target lengths: short function,
+        // medium function, and past-the-512-cap (exercises truncation).
+        let runtime = tokio::runtime::Builder::new_multi_thread()
+            .enable_all()
+            .build()
+            .expect("runtime");
+        for (label, line_count) in [
+            ("short(~8 lines)", 8),
+            ("medium(~40 lines)", 40),
+            ("long(~200 lines)", 200),
+        ] {
+            let text = (0..line_count)
+                .map(|i| format!("    let value_{i} = compute_widget_total({i}) + offset;\n"))
+                .collect::<String>();
+            let texts: Vec<String> = (0..64)
+                .map(|i| format!("fn f{i}() {{\n{text}}}\n"))
+                .collect();
+
+            let started = std::time::Instant::now();
+            let vectors = runtime
+                .block_on(embedder.embed(&texts))
+                .expect("embed batch");
+            let elapsed = started.elapsed();
+            assert_eq!(vectors.len(), texts.len());
+            println!(
+                "{label}: {} texts in {:?} => {:.1} ms/text",
+                texts.len(),
+                elapsed,
+                elapsed.as_millis() as f64 / texts.len() as f64
+            );
+        }
     }
 
     // -----------------------------------------------------------------------
