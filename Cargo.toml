@@ -84,6 +84,13 @@ sysinfo = "0.38"
 # Phase 3 (task 3.10) — regex for secret pattern matching
 regex = "1"
 
+# Full debuginfo for the huge dep tree (lancedb/datafusion, ort, tantivy) is the
+# main cost in link time and target/ size; line tables keep usable backtraces.
+# For interactive debugger sessions, override once with:
+#   CARGO_PROFILE_DEV_DEBUG=full cargo build
+[profile.dev]
+debug = "line-tables-only"
+
 [dev-dependencies]
 temp-env = "0.3"
 tempfile = "3"
@@ -97,3 +104,7 @@ wiremock = "0.6"
 [[bench]]
 name = "retrieval_quality"
 harness = false
+# Don't build+run this binary as part of `cargo test` (cargo's default for
+# bench targets is test = true, which executes harness = false benches on
+# every test run). Run it explicitly: cargo bench --bench retrieval_quality
+test = false
