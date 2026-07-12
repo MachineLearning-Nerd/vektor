@@ -72,6 +72,10 @@ pub struct OnnxEmbedder {
     /// Prefix prepended to queries before embedding (Jina: `"search_query: "`;
     /// BGE/none: `""`).
     query_prefix: String,
+    /// Tokenizer truncation bound (the model's position capacity). Kept for
+    /// telemetry: rows whose encoding hits this length were (almost surely)
+    /// truncated — the 6.8 head-only-embedding trade-off made observable.
+    max_seq_len: usize,
 }
 
 /// Standard `token_type_ids` input name used by BERT-family ONNX exports.
@@ -159,6 +163,7 @@ impl OnnxEmbedder {
             has_token_type_ids,
             doc_prefix: doc_prefix.to_string(),
             query_prefix: query_prefix.to_string(),
+            max_seq_len,
         })
     }
 
@@ -288,10 +293,18 @@ impl OnnxEmbedder {
 
         // 6.7 throughput profile: per-stage cost of this batch. `seq_len` is
         // the padded width every row paid — the number that explains most
-        // per-batch cost variance (attention is O(seq_len²)).
+        // per-batch cost variance (attention is O(seq_len²)). `rows_at_cap`
+        // counts rows that hit the truncation bound, i.e. chunks embedded
+        // head-only (6.8 decision: accepted for small-window models —
+        // measured at 6.2% of tokio chunks; BM25 still indexes full text).
+        let rows_at_cap = encodings
+            .iter()
+            .filter(|enc| enc.get_ids().len() >= self.max_seq_len)
+            .count();
         tracing::debug!(
             rows,
             seq_len,
+            rows_at_cap,
             tokenize_ms,
             forward_ms,
             total_ms = batch_started.elapsed().as_millis(),
@@ -1018,6 +1031,71 @@ mod tests {
         // Jina v2 base code is 768-dim; assertion is informational.
         assert!(embedder.dim() == 768 || embedder.dim() == 384);
         assert_eq!(embedder.name(), config.embedding.onnx_model);
+    }
+
+    /// 6.8 measurement — chunk a real corpus at several `chunk_max_lines`
+    /// candidates and report the token-length distribution per candidate, so
+    /// the chunk-vs-window decision is made on data, not vibes. Requires a
+    /// downloaded tokenizer + a cloned corpus:
+    /// `VEKTOR_TEST_DATA_DIR=~/vektor-bench/data \
+    ///  VEKTOR_TEST_ONNX_MODEL=BAAI/bge-small-en-v1.5 \
+    ///  VEKTOR_TEST_CORPUS=~/vektor-bench/repos/tokio \
+    ///  cargo test --release chunk_token_distribution -- --ignored --nocapture`
+    #[test]
+    #[ignore = "requires a downloaded model + local corpus clone (see doc comment)"]
+    fn chunk_token_distribution_profile() {
+        let mut config = Config::default();
+        if let Ok(dir) = std::env::var("VEKTOR_TEST_DATA_DIR") {
+            config.index.data_dir = dir;
+        }
+        if let Ok(model) = std::env::var("VEKTOR_TEST_ONNX_MODEL") {
+            config.embedding.onnx_model = model;
+        }
+        let corpus = std::env::var("VEKTOR_TEST_CORPUS").expect("set VEKTOR_TEST_CORPUS");
+        let corpus = Path::new(&corpus);
+
+        let dir = model_dir(&config).expect("model dir");
+        let tokenizer =
+            Tokenizer::from_file(tokenizer_path(&dir)).expect("load tokenizer (no truncation)");
+
+        let files = crate::discovery::discover_files(corpus, &config).expect("discover corpus");
+        println!("corpus: {} files: {}", corpus.display(), files.len());
+
+        for max_lines in [200usize, 64, 48, 40, 32] {
+            let mut cfg = config.clone();
+            cfg.index.chunk_max_lines = max_lines;
+
+            let mut token_counts: Vec<usize> = Vec::new();
+            for path in &files {
+                let Ok(content) = std::fs::read_to_string(path) else {
+                    continue; // binary/non-utf8: the real pipeline reads lossily
+                };
+                let rel = path.strip_prefix(corpus).unwrap_or(path);
+                for chunk in crate::chunker::chunk_file(rel, &content, &cfg) {
+                    let encoding = tokenizer
+                        .encode(chunk.content.as_str(), true)
+                        .expect("tokenize chunk");
+                    token_counts.push(encoding.get_ids().len());
+                }
+            }
+            token_counts.sort_unstable();
+            let n = token_counts.len().max(1);
+            let pct = |p: f64| token_counts[((n as f64 * p) as usize).min(n - 1)];
+            let over_512 = token_counts.iter().filter(|&&t| t > 512).count();
+            let total_tokens: usize = token_counts.iter().sum();
+            let capped_tokens: usize = token_counts.iter().map(|&t| t.min(512)).sum();
+            println!(
+                "max_lines={max_lines:>3}: chunks={n:>5} p50={} p90={} p99={} max={} \
+                 over512={over_512} ({:.1}%) total_tokens={total_tokens} \
+                 embedded@512cap={capped_tokens} lost_tokens={:.1}%",
+                pct(0.50),
+                pct(0.90),
+                pct(0.99),
+                token_counts.last().copied().unwrap_or(0),
+                over_512 as f64 * 100.0 / n as f64,
+                (total_tokens - capped_tokens) as f64 * 100.0 / total_tokens.max(1) as f64,
+            );
+        }
     }
 
     /// 6.7 throughput profile — prints per-sequence-length embed cost so the

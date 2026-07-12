@@ -19,7 +19,7 @@
 | 6.4 | `BENCHMARKS.md` baseline — initial commit + CI step that posts benchmark deltas on PRs | S | 6.3 | ✅ Done — baseline + informational PR delta workflow |
 | 6.5 | `v0.4.0` release readiness docs + authorization checklist | M | 5.13, 6.1, 6.2, 6.4 | ✅ Done — docs/checklist only; tag/publish deferred |
 | 6.7 | Embedding throughput investigation — profile the ~194 ms/chunk cold-index embed cost (ONNX threads, batch size) found by the scale-test harness; measure-first | M | 6.3 | ✅ Investigation closed — forward pass is CPU-roofline-bound; CoreML rejected with numbers; remaining levers: 6.8 sub-chunking + future int8 quantization (see task file findings) |
-| 6.8 | Chunk size vs embedder window alignment — 200-line chunks truncate at bge-small's 512 tokens, so lite embeddings are head-only; decide sub-chunk / accept / window-pool with benchmark evidence | M | 6.3, 6.7 | ⬜ Not started — not a v0.4.0 blocker |
+| 6.8 | Chunk size vs embedder window alignment — 200-line chunks truncate at bge-small's 512 tokens, so lite embeddings are head-only; decide sub-chunk / accept / window-pool with benchmark evidence | M | 6.3, 6.7 | ✅ Decided (b) with measurement — only 6.2% of chunks truncate (lite-only; Jina unaffected, max 2,511 < 8,192); line-budget splitting refuted by data; kept 200-line chunks + `rows_at_cap` telemetry; window-pooling deferred pending real-repo semantic evals (see task file) |
 
 ---
 
