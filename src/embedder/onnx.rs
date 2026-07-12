@@ -99,12 +99,18 @@ impl OnnxEmbedder {
         // Fail clearly *before* touching ort if artifacts are absent.
         ensure_artifacts_present(&model_name, &tokenizer_path, &onnx_path)?;
 
-        let tokenizer = Tokenizer::from_file(&tokenizer_path).map_err(|error| {
+        let mut tokenizer = Tokenizer::from_file(&tokenizer_path).map_err(|error| {
             VektorError::Embedding(format!(
                 "failed to load tokenizer at {}: {error}",
                 tokenizer_path.display()
             ))
         })?;
+
+        // Cap sequences at the model's position capacity: over-long chunks
+        // otherwise fail the whole ONNX forward pass (and with batched
+        // indexing, the whole batch).
+        let max_seq_len = max_seq_len_for_model(&model_name);
+        apply_truncation(&mut tokenizer, max_seq_len)?;
 
         let mut session = build_session(&onnx_path)?;
 
@@ -300,11 +306,17 @@ impl Embedder for OnnxEmbedder {
         }
 
         let run_batches = || -> Result<Vec<Vec<f32>>> {
-            let mut out: Vec<Vec<f32>> = Vec::with_capacity(texts.len());
-            for batch in texts.chunks(MAX_BATCH_SIZE) {
-                out.extend(self.embed_batch(batch)?);
+            // Embed in length-sorted order so each ONNX batch pads only to
+            // ITS longest member (see `length_sorted_order`), then scatter
+            // results back to input positions.
+            let order = length_sorted_order(texts);
+            let sorted_texts: Vec<String> = order.iter().map(|&i| texts[i].clone()).collect();
+
+            let mut sorted_out: Vec<Vec<f32>> = Vec::with_capacity(texts.len());
+            for batch in sorted_texts.chunks(MAX_BATCH_SIZE) {
+                sorted_out.extend(self.embed_batch(batch)?);
             }
-            Ok(out)
+            Ok(restore_input_order(&order, sorted_out))
         };
 
         let on_multi_thread = tokio::runtime::Handle::try_current().is_ok_and(|handle| {
@@ -490,6 +502,68 @@ fn static_dim_for_model(model_name: &str) -> Option<usize> {
     } else {
         None
     }
+}
+
+/// Model maximum sequence length in tokens (position-embedding capacity).
+///
+/// Sequences longer than this do not degrade gracefully — the position
+/// embedding broadcast inside the model FAILS the whole forward pass
+/// ("Attempting to broadcast an axis by a dimension other than 1"), taking
+/// every text in the batch down with it. The tokenizer must truncate to this
+/// bound. Jina v2 uses ALiBi and officially supports 8192; BERT-family models
+/// (BGE included) have 512 learned positions, which is also the safe default
+/// for unknown models.
+fn max_seq_len_for_model(model_name: &str) -> usize {
+    let lower = model_name.to_ascii_lowercase();
+    if lower.contains("jina-embeddings-v2") {
+        8192
+    } else {
+        512
+    }
+}
+
+/// Indices of `texts` sorted by ascending byte length (stable).
+///
+/// ONNX pads every batch to its longest member and attention cost grows
+/// quadratically with sequence length, so ONE long text in a batch of short
+/// ones makes all 32 rows pay near-max-width compute. Embedding in
+/// length-sorted order keeps each batch length-homogeneous (2–5x on
+/// mixed-length corpora). Byte length is a cheap, good-enough proxy for token
+/// count — bucketing only needs the ORDER to be roughly right, not exact.
+fn length_sorted_order(texts: &[String]) -> Vec<usize> {
+    let mut order: Vec<usize> = (0..texts.len()).collect();
+    order.sort_by_key(|&i| texts[i].len());
+    order
+}
+
+/// Scatter vectors produced in `order` back to input positions:
+/// `sorted[j]` is the embedding of `texts[order[j]]`.
+fn restore_input_order(order: &[usize], sorted: Vec<Vec<f32>>) -> Vec<Vec<f32>> {
+    debug_assert_eq!(order.len(), sorted.len());
+    let mut out: Vec<Vec<f32>> = vec![Vec::new(); sorted.len()];
+    for (&slot, vector) in order.iter().zip(sorted) {
+        out[slot] = vector;
+    }
+    out
+}
+
+/// Enable truncation at `max_length` tokens on the loaded tokenizer.
+///
+/// `tokenizer.json` artifacts generally ship WITHOUT truncation enabled (the
+/// `model_max_length` hint lives in `tokenizer_config.json`, which we don't
+/// load), so the embedder must impose the model's real limit itself. Losing
+/// the tail of an over-long chunk is the accepted trade-off — the alternative
+/// is failing the entire embedding batch.
+fn apply_truncation(tokenizer: &mut Tokenizer, max_length: usize) -> Result<()> {
+    tokenizer
+        .with_truncation(Some(tokenizers::TruncationParams {
+            max_length,
+            ..Default::default()
+        }))
+        .map_err(|error| {
+            VektorError::Embedding(format!("failed to configure tokenizer truncation: {error}"))
+        })?;
+    Ok(())
 }
 
 // ---------------------------------------------------------------------------
@@ -813,6 +887,87 @@ mod tests {
         );
         assert_eq!(static_dim_for_model("BAAI/bge-small-en-v1.5"), Some(384));
         assert_eq!(static_dim_for_model("unknown/model"), None);
+    }
+
+    #[test]
+    fn onnx_embedder_length_sorted_order_groups_similar_lengths() {
+        let texts = vec![
+            "a".repeat(500),
+            "b".to_string(),
+            "c".repeat(480),
+            "d".repeat(3),
+        ];
+
+        let order = length_sorted_order(&texts);
+
+        // Ascending by byte length: short texts share batches with short
+        // texts, so ONNX pads each batch only to ITS longest member instead
+        // of the corpus-wide longest (attention is O(len²) per row).
+        assert_eq!(order, vec![1, 3, 2, 0]);
+    }
+
+    #[test]
+    fn onnx_embedder_restore_input_order_inverts_the_sort() {
+        let texts = vec![
+            "medium-text".to_string(),
+            "x".to_string(),
+            "the-longest-text-of-all".to_string(),
+        ];
+        let order = length_sorted_order(&texts);
+
+        // Simulate embedding in sorted order: vector[0] = text byte length.
+        let sorted_vectors: Vec<Vec<f32>> =
+            order.iter().map(|&i| vec![texts[i].len() as f32]).collect();
+
+        let restored = restore_input_order(&order, sorted_vectors);
+
+        // Every input position must get ITS OWN embedding back.
+        for (text, vector) in texts.iter().zip(&restored) {
+            assert_eq!(
+                vector[0],
+                text.len() as f32,
+                "restored vector must correspond to the original input position"
+            );
+        }
+    }
+
+    #[test]
+    fn onnx_embedder_max_seq_len_known_models_and_conservative_default() {
+        assert_eq!(
+            max_seq_len_for_model("jinaai/jina-embeddings-v2-base-code"),
+            8192,
+            "Jina v2 uses ALiBi positions; supports long sequences"
+        );
+        assert_eq!(
+            max_seq_len_for_model("BAAI/bge-small-en-v1.5"),
+            512,
+            "BGE is BERT-family: 512 position embeddings"
+        );
+        assert_eq!(
+            max_seq_len_for_model("unknown/model"),
+            512,
+            "unknown models get the conservative BERT-family default"
+        );
+    }
+
+    #[test]
+    fn onnx_embedder_apply_truncation_caps_tokenizer_max_length() {
+        let mut tokenizer = Tokenizer::new(tokenizers::models::wordlevel::WordLevel::default());
+        assert!(
+            tokenizer.get_truncation().is_none(),
+            "fresh tokenizer starts without truncation"
+        );
+
+        apply_truncation(&mut tokenizer, 512).expect("apply truncation");
+
+        let params = tokenizer
+            .get_truncation()
+            .expect("truncation must be configured");
+        assert_eq!(
+            params.max_length, 512,
+            "sequences longer than the model's position capacity must be truncated, \
+             not passed through to crash the ONNX Add node"
+        );
     }
 
     #[test]
