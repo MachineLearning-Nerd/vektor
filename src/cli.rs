@@ -15,7 +15,7 @@ use crate::{
     secrets::SecretDetector,
     state::{FileStatus, HashStore, hash_file},
     text_index::TextIndex,
-    vector_store::VectorStore,
+    vector_store::{FileToReindex, VectorStore},
 };
 
 #[derive(Parser, Debug)]
@@ -35,6 +35,9 @@ pub struct Cli {
 
 #[derive(Subcommand, Debug)]
 pub enum Command {
+    /// Register Vektor with supported MCP clients
+    Init(crate::init::InitArgs),
+
     /// Index a codebase for later search and context assembly
     Index(IndexArgs),
 
@@ -80,10 +83,21 @@ pub enum ModelsAction {
 }
 
 pub async fn run(cli: Cli) -> Result<()> {
+    let init_args = match &cli.command {
+        Command::Init(args) => Some(args.clone()),
+        _ => None,
+    };
+    if let Some(args) = init_args {
+        let report = crate::init::run(args)?;
+        println!("{}", report.as_text());
+        return Ok(());
+    }
+
     let config = crate::config::Config::load(cli.config.clone())?;
     tracing::debug!(?config, "configuration loaded");
 
     match cli.command {
+        Command::Init(_) => unreachable!("handled before config load"),
         Command::Index(args) => {
             tracing::info!(
                 path = %args.path.display(),
@@ -178,23 +192,81 @@ pub(crate) async fn index_path_with_options(
     let (root, files) = collect_index_files_with_options(path, config, &options)?;
     let is_full_directory_path = path.is_dir() && options.extensions.is_none();
 
-    let embedder = build_embedder(config)?;
-    let store = VectorStore::new(&root, config, embedder.dim(), embedder.name()).await?;
-    let mut text_index = TextIndex::new(&root, config)?;
-    let was_text_index_ready = text_index.is_ready();
-    let run_options =
-        IndexRunOptions::from_index_options(&options, was_text_index_ready, is_full_directory_path);
+    // Lazy path: an existing store opens from its persisted meta, deferring
+    // embedder construction (ONNX model load + warm-up) until a changed file
+    // actually needs embedding — a no-change warm run never pays it. The
+    // factory re-checks dim/model against the store meta with the same errors
+    // `VectorStore::new` raises, but only when it fires; a run that embeds
+    // nothing won't notice a config model switch (search's
+    // `open_existing_for_model` still will). Any open failure (no store yet,
+    // corrupt meta) falls back to the eager path, which creates/repairs state
+    // exactly as before.
+    match VectorStore::open_existing(&root, config).await {
+        Ok(store) => {
+            let meta_dim = store.meta().embedding_dim;
+            let meta_model = store.meta().model_name.clone();
+            let lance_dir = store.lance_dir().display().to_string();
+            let mut text_index = TextIndex::new(&root, config)?;
+            let was_text_index_ready = text_index.is_ready();
+            let run_options = IndexRunOptions::from_index_options(
+                &options,
+                was_text_index_ready,
+                is_full_directory_path,
+            );
 
-    index_path_with_embedder(
-        &root,
-        files,
-        config,
-        embedder.as_ref(),
-        store,
-        &mut text_index,
-        run_options,
-    )
-    .await
+            let factory: EmbedderFactory<'_> = Box::new(move || {
+                let embedder = build_embedder(config)?;
+                if embedder.dim() != meta_dim {
+                    return Err(VektorError::Storage(format!(
+                        "embedding dimension changed ({meta_dim} -> {}); re-index required: \
+                         delete {lance_dir} and run `vektor index` again",
+                        embedder.dim(),
+                    )));
+                }
+                if embedder.name() != meta_model {
+                    return Err(VektorError::Storage(format!(
+                        "embedding model changed ({meta_model} -> {}); re-index required: \
+                         delete {lance_dir} and run `vektor index` again",
+                        embedder.name(),
+                    )));
+                }
+                Ok(embedder)
+            });
+
+            index_path_with_embedder_source(
+                &root,
+                files,
+                config,
+                EmbedderSource::Lazy(factory),
+                store,
+                &mut text_index,
+                run_options,
+            )
+            .await
+        }
+        Err(_) => {
+            let embedder = build_embedder(config)?;
+            let store = VectorStore::new(&root, config, embedder.dim(), embedder.name()).await?;
+            let mut text_index = TextIndex::new(&root, config)?;
+            let was_text_index_ready = text_index.is_ready();
+            let run_options = IndexRunOptions::from_index_options(
+                &options,
+                was_text_index_ready,
+                is_full_directory_path,
+            );
+
+            index_path_with_embedder(
+                &root,
+                files,
+                config,
+                embedder.as_ref(),
+                store,
+                &mut text_index,
+                run_options,
+            )
+            .await
+        }
+    }
 }
 
 #[derive(Debug, Clone, Default)]
@@ -262,6 +334,90 @@ pub(crate) async fn index_path_with_embedder(
     files: Vec<IndexFile>,
     config: &Config,
     embedder: &dyn Embedder,
+    store: VectorStore,
+    text_index: &mut dyn TextIndexWriter,
+    run_options: IndexRunOptions,
+) -> Result<IndexStats> {
+    index_path_with_embedder_source(
+        root,
+        files,
+        config,
+        EmbedderSource::Ready(embedder),
+        store,
+        text_index,
+        run_options,
+    )
+    .await
+}
+
+/// Deferred embedder construction: `Box<dyn FnOnce>` so ONNX model load +
+/// warm-up only happen if a run actually embeds something.
+pub(crate) type EmbedderFactory<'a> = Box<dyn FnOnce() -> Result<Box<dyn Embedder>> + Send + 'a>;
+
+/// How [`index_path_with_embedder_source`] obtains its embedder.
+///
+/// `Ready` is the eager path (fresh stores, tests, callers holding a cached
+/// embedder). `Lazy` defers construction until the first batch that needs a
+/// vector write — a run where every file is unchanged never builds the
+/// embedder at all, which is what keeps warm re-index runs fast.
+pub(crate) enum EmbedderSource<'a> {
+    Ready(&'a dyn Embedder),
+    Lazy(EmbedderFactory<'a>),
+}
+
+/// Memoizing resolver for [`EmbedderSource`]: builds a `Lazy` factory exactly
+/// once on first use, then hands out the same embedder for later batches.
+enum ResolvedEmbedder<'a> {
+    Ready(&'a dyn Embedder),
+    Pending(EmbedderFactory<'a>),
+    Built(Box<dyn Embedder>),
+    Poisoned,
+}
+
+impl<'a> ResolvedEmbedder<'a> {
+    fn new(source: EmbedderSource<'a>) -> Self {
+        match source {
+            EmbedderSource::Ready(embedder) => Self::Ready(embedder),
+            EmbedderSource::Lazy(factory) => Self::Pending(factory),
+        }
+    }
+
+    fn get(&mut self) -> Result<&dyn Embedder> {
+        if matches!(self, Self::Pending(_)) {
+            let Self::Pending(factory) = std::mem::replace(self, Self::Poisoned) else {
+                unreachable!("matched Pending above");
+            };
+            *self = Self::Built(factory()?);
+        }
+        match self {
+            Self::Ready(embedder) => Ok(*embedder),
+            Self::Built(embedder) => Ok(&**embedder),
+            Self::Poisoned => Err(VektorError::Embedding(
+                "embedder construction failed earlier in this run".into(),
+            )),
+            Self::Pending(_) => unreachable!("resolved above"),
+        }
+    }
+}
+
+/// A changed file collected in phase 1, awaiting its batched vector write.
+struct PendingFile {
+    rel_path: String,
+    content_hash: String,
+    chunks: Vec<Chunk>,
+    last_modified: i64,
+}
+
+/// Files per [`VectorStore::reindex_files`] call. Bounds each Lance delete
+/// predicate / in-memory row set while still turning a 10K-file run into
+/// ~100 write transactions instead of ~20K (per-file delete+insert pairs).
+const REINDEX_FILE_BATCH: usize = 100;
+
+pub(crate) async fn index_path_with_embedder_source(
+    root: &Path,
+    files: Vec<IndexFile>,
+    config: &Config,
+    embedder: EmbedderSource<'_>,
     mut store: VectorStore,
     text_index: &mut dyn TextIndexWriter,
     run_options: IndexRunOptions,
@@ -269,8 +425,12 @@ pub(crate) async fn index_path_with_embedder(
     let hash_store = HashStore::open(root, config)?;
     let detector = SecretDetector::new();
     let mut stats = IndexStats::default();
-    let mut processed_files = Vec::new();
+    let mut embedder = ResolvedEmbedder::new(embedder);
 
+    // ── Phase 1: collect changed files (hash gate, secret gates, chunking) ──
+    // No vector-store write happens here, so a run where nothing changed
+    // finishes without ever resolving the embedder.
+    let mut pending: Vec<PendingFile> = Vec::new();
     for file in files {
         stats.files += 1;
 
@@ -331,54 +491,92 @@ pub(crate) async fn index_path_with_embedder(
             }
         }
 
-        // Delete-then-insert this file's rows; reuse unchanged chunk embeddings.
         let last_modified = file_mtime_secs(&file.path);
-        let reindex = match store
-            .reindex_file(&file.rel_path, &safe_chunks, embedder, last_modified)
-            .await
-        {
+        pending.push(PendingFile {
+            rel_path: file.rel_path,
+            content_hash: current_hash,
+            chunks: safe_chunks,
+            last_modified,
+        });
+    }
+
+    // ── Phase 2: batched delete-then-insert vector writes ───────────────────
+    // One `reindex_files` call per REINDEX_FILE_BATCH files keeps the number
+    // of Lance write transactions bounded (LanceDB commits a new dataset
+    // version per delete/insert — per-file pairs are O(n) versions and get
+    // slower as the version chain grows). Granularity trade-off: a Lance
+    // write failure marks the WHOLE batch Failed (files reprocess next run);
+    // Tantivy writes remain per-file, as before.
+    let mut processed_files = Vec::new();
+    for batch in pending.chunks(REINDEX_FILE_BATCH) {
+        let embedder = embedder.get()?;
+        let batch_input: Vec<FileToReindex<'_>> = batch
+            .iter()
+            .map(|p| FileToReindex {
+                rel_path: &p.rel_path,
+                chunks: &p.chunks,
+                last_modified: p.last_modified,
+            })
+            .collect();
+
+        let reindex = match store.reindex_files(&batch_input, embedder).await {
             Ok(reindex) => reindex,
             Err(error) => {
-                stats.failed += 1;
-                hash_store.set_hash(&file.rel_path, &current_hash, FileStatus::Failed)?;
                 tracing::debug!(
-                    path = %file.path.display(),
+                    files = batch.len(),
                     error = %error,
-                    "failed to write vector rows during index"
+                    "failed to write batched vector rows during index"
                 );
+                for p in batch {
+                    stats.failed += 1;
+                    hash_store.set_hash(&p.rel_path, &p.content_hash, FileStatus::Failed)?;
+                }
                 continue;
             }
         };
-
-        if let Err(error) = text_index
-            .delete_by_file(&file.rel_path)
-            .and_then(|_| text_index.add_chunks(&safe_chunks))
-        {
-            if let Err(cleanup_error) = text_index.delete_by_file(&file.rel_path) {
-                tracing::debug!(
-                    path = %file.path.display(),
-                    error = %cleanup_error,
-                    "failed to queue Tantivy cleanup after per-file write failure"
-                );
-            }
-            stats.failed += 1;
-            hash_store.set_hash(&file.rel_path, &current_hash, FileStatus::Failed)?;
-            tracing::debug!(
-                path = %file.path.display(),
-                error = %error,
-                "failed to write Tantivy rows during index"
-            );
-            continue;
-        }
 
         stats.chunks += reindex.chunks;
         stats.embeddings += reindex.embedded;
         stats.reused += reindex.reused;
 
-        // M-3 decision: a file whose chunks were ALL secret-dropped is still marked
-        // Indexed (it was processed, has 0 vectors, won't reprocess until its hash
-        // changes). Keep it Pending until the final Tantivy commit succeeds.
-        processed_files.push((file.rel_path, current_hash));
+        for p in batch {
+            if let Err(error) = text_index
+                .delete_by_file(&p.rel_path)
+                .and_then(|_| text_index.add_chunks(&p.chunks))
+            {
+                if let Err(cleanup_error) = text_index.delete_by_file(&p.rel_path) {
+                    tracing::debug!(
+                        path = %p.rel_path,
+                        error = %cleanup_error,
+                        "failed to queue Tantivy cleanup after per-file write failure"
+                    );
+                }
+                stats.failed += 1;
+                hash_store.set_hash(&p.rel_path, &p.content_hash, FileStatus::Failed)?;
+                tracing::debug!(
+                    path = %p.rel_path,
+                    error = %error,
+                    "failed to write Tantivy rows during index"
+                );
+                continue;
+            }
+
+            // M-3 decision: a file whose chunks were ALL secret-dropped is still
+            // marked Indexed (it was processed, has 0 vectors, won't reprocess
+            // until its hash changes). Keep it Pending until the final Tantivy
+            // commit succeeds.
+            processed_files.push((p.rel_path.clone(), p.content_hash.clone()));
+        }
+    }
+
+    // Compact fragments + prune superseded versions ONCE per run that wrote
+    // anything. Failure is non-fatal by design: the rows are already durable
+    // and correct; the only cost of a skipped optimize is disk/version bloat
+    // until the next successful run.
+    if !pending.is_empty()
+        && let Err(error) = store.optimize().await
+    {
+        tracing::warn!(error = %error, "post-index optimize failed; continuing");
     }
 
     text_index.commit(run_options.mark_text_index_ready)?;
@@ -1287,6 +1485,137 @@ mod tests {
                     "successful per-file writes stay Pending until Tantivy commit succeeds"
                 );
             }
+        }
+    }
+
+    /// 6.x — batched vector writes + post-run optimize + lazy embedder.
+    mod batched_indexing {
+        use super::*;
+
+        /// Count Lance version manifests anywhere under `dir` (the data_dir).
+        /// One manifest per committed Lance version — the observable proxy for
+        /// write-transaction count.
+        fn manifest_count(dir: &Path) -> usize {
+            let mut count = 0;
+            let Ok(entries) = std::fs::read_dir(dir) else {
+                return 0;
+            };
+            for entry in entries.flatten() {
+                let path = entry.path();
+                if path.is_dir() {
+                    count += manifest_count(&path);
+                } else if path.extension().is_some_and(|e| e == "manifest") {
+                    count += 1;
+                }
+            }
+            count
+        }
+
+        fn write_repo(dir: &Path, file_count: usize) {
+            std::fs::create_dir_all(dir).expect("mkdir repo");
+            for i in 0..file_count {
+                std::fs::write(
+                    dir.join(format!("file{i}.rs")),
+                    format!("pub fn item{i}() -> u32 {{ {i} }}\n"),
+                )
+                .expect("write file");
+            }
+        }
+
+        #[tokio::test]
+        async fn full_index_run_commits_bounded_lance_versions() {
+            let tempdir = tempfile::tempdir().expect("tempdir");
+            let dir = tempdir.path().join("repo");
+            write_repo(&dir, 8);
+            let data_dir = tempdir.path().join("data");
+            let config = config_for(&data_dir);
+
+            let (stats, _texts) = index_with_fake(&dir, &config, false).await;
+            assert_eq!(stats.changed, 8);
+            assert_eq!(stats.failed, 0);
+
+            // Batched writes + post-run optimize: the whole run must NOT
+            // commit one delete+insert version pair per file (~17 manifests
+            // for 8 files).
+            let versions = manifest_count(&data_dir);
+            assert!(
+                versions <= 6,
+                "expected bounded Lance versions after a full index run, got {versions}"
+            );
+        }
+
+        #[tokio::test]
+        async fn repeated_force_runs_stay_bounded_via_optimize() {
+            let tempdir = tempfile::tempdir().expect("tempdir");
+            let dir = tempdir.path().join("repo");
+            write_repo(&dir, 4);
+            let data_dir = tempdir.path().join("data");
+            let config = config_for(&data_dir);
+
+            index_with_fake(&dir, &config, false).await;
+            index_with_fake(&dir, &config, true).await;
+            index_with_fake(&dir, &config, true).await;
+
+            // Without post-run pruning, version manifests accrue across runs
+            // even with batched writes.
+            let versions = manifest_count(&data_dir);
+            assert!(
+                versions <= 6,
+                "expected optimize() to prune superseded versions across runs, got {versions}"
+            );
+        }
+
+        #[tokio::test]
+        async fn unchanged_run_never_builds_the_embedder() {
+            let tempdir = tempfile::tempdir().expect("tempdir");
+            let dir = tempdir.path().join("repo");
+            write_repo(&dir, 3);
+            let data_dir = tempdir.path().join("data");
+            let config = config_for(&data_dir);
+
+            let (stats, _texts) = index_with_fake(&dir, &config, false).await;
+            assert_eq!(stats.changed, 3);
+
+            // Second run, nothing changed: with a lazy source the factory must
+            // never fire — this is what keeps warm re-index runs from paying
+            // ONNX model load + warm-up.
+            let (root, files) =
+                collect_index_files(&dir, &config).expect("collect files for warm run");
+            let store = VectorStore::open_existing(&root, &config)
+                .await
+                .expect("open existing store without an embedder");
+            let mut text_index =
+                crate::text_index::TextIndex::new(&root, &config).expect("open text index");
+            assert!(text_index.is_ready(), "first run marked the index ready");
+
+            let factory_calls = AtomicUsize::new(0);
+            let source = EmbedderSource::Lazy(Box::new(|| {
+                factory_calls.fetch_add(1, Ordering::SeqCst);
+                Ok(Box::new(FakeEmbedder::new()))
+            }));
+
+            let stats = index_path_with_embedder_source(
+                &root,
+                files,
+                &config,
+                source,
+                store,
+                &mut text_index,
+                IndexRunOptions {
+                    force: false,
+                    mark_text_index_ready: true,
+                },
+            )
+            .await
+            .expect("warm run");
+
+            assert_eq!(stats.unchanged, 3);
+            assert_eq!(stats.changed, 0);
+            assert_eq!(
+                factory_calls.load(Ordering::SeqCst),
+                0,
+                "an unchanged run must never construct the embedder"
+            );
         }
     }
 }

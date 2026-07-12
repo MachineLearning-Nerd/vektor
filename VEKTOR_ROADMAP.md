@@ -11,8 +11,8 @@
 |---|---|
 | Document | VEKTOR_ROADMAP.md |
 | Version | 0.1.0 |
-| Last Updated | 2026-05-31 |
-| Status | Active — Stage 2 in progress |
+| Last Updated | 2026-06-06 |
+| Status | Active — Stage 2 local-first closeout |
 | Tracks PRD | VEKTOR_PRD.md v2.5.0 |
 | Owner | Dinesh (solo) |
 | Versioning Convention | Hybrid: Phase = engineering scope, `vX.Y.Z` = cargo release tag |
@@ -70,7 +70,7 @@ Each arrow is a hard gate — the next stage does not begin until the previous s
 | Re-sequencing (B1.2/B1.5 → Stage 2, C8.1/C8.2 → Stage 2, `vektor init` added, lightweight benchmark gate at v0.4) | ✅ Done (commit `3d81fa6`) |
 | `README.md` exists | ✅ Done (commit `3d81fa6`) |
 | `LICENSE` exists | ✅ Done (commit `3d81fa6`) |
-| Crate name decision (`vektor` taken on crates.io) | ⏸ Deferred until `cargo publish` |
+| Crate name decision (`vektor` taken on crates.io) | ⏸ Deferred; mandatory decision gate documented in `release-checklist-v0.4.0.md` before any crates.io publish |
 | `Cargo.toml` exists in repo | ✅ Done (commit `a3a2c2a`) |
 | `Cargo.lock` + `src/main.rs` + `rust-toolchain.toml` exist | ✅ Done (commit `a3a2c2a`) |
 | Pre-commit hooks configured (task 0.3) | ✅ Done (commit `689d5b2`) |
@@ -87,7 +87,9 @@ Each arrow is a hard gate — the next stage does not begin until the previous s
 | Phase 3 embedding + storage implementation | ✅ Done: `Embedder` trait + ONNX Jina v2 (`ort` + `tokenizers`, warm-up, mean-pool + L2-norm) + OpenAI-compatible cloud backend + `build_embedder` factory; LanceDB `VectorStore` (PRD §4.10 Arrow schema, read-before-delete content_hash cache, reindex reuse planning + `reindex_file`, ANN `search`, `delete_by_file`); secret-aware indexing (`SecretDetector` B1.2 + file-level skip list B1.5); `vektor models download [--lite]` (idempotent/resumable); real vector-only `index_codebase` MCP tool sharing the CLI index core. |
 | `v0.3.0` publish | ⏳ Prepared (private, notes-only): version bumped to 0.3.0, `release-notes-v0.3.0.md` drafted, exit criteria verified (runnable suite green; model/network-dependent criteria covered by `#[ignore]`d smoke tests + documented manual commands). Tag/push/GitHub Release pending separate human authorization. Binary artifacts deferred to Phase 6 / task 6.2. Repo stays private until launch. |
 | Phase 4 task expansion | ✅ Done: `docs/plans/initial/phase-4-search-mcp/` has per-task files `01-..08-*.md` (expanded by task 3.12). |
-| Phase 4 search + MCP implementation | ✅ Done — merged to main: Tantivy BM25 (`TextIndex`), `rrf_fuse` + `AdaptiveWeights` + `SynonymExpander`, `search_hybrid` (`tokio::join!` + RRF), `index_codebase` extended to write both LanceDB + Tantivy, real MCP handlers (`search_code` + naive `get_context_for_prompt` shaping PRD §9 envelopes). PR #4 (`1b39f49`) + review-fix PRs #5/#6 (`7cfd8e9`, `c0560e3`). Interim phase — no release tag (next tag `v0.4.0` after Phase 5). |
+| Phase 4 search + MCP implementation | ✅ Done — merged to main: Tantivy BM25 (`TextIndex`), `rrf_fuse` + `AdaptiveWeights` + `SynonymExpander`, `search_hybrid` (`tokio::join!` + RRF), `index_codebase` extended to write both LanceDB + Tantivy, real MCP handlers (`search_code` + naive `get_context_for_prompt` shaping PRD §9 envelopes). PR #4 (`1b39f49`) + review-fix PRs #5/#6 (`7cfd8e9`, `c0560e3`). |
+| Phase 5 context assembly implementation | ✅ Done — merged to main via PR #11: TokenCounter, Deduplicator, RelatedExpander, QueryCache, ShallowIndexer, IndexStatusTracker, RecencyTracker, ContextAssembler, MCP `get_context_for_prompt`, warm-up, and Stage 5 integration check. |
+| Phase 6 launch polish implementation | ✅ Local-first batch complete and verified on `feature/phase-6-launch-polish`: `vektor init`, 5-platform release workflow scaffold, retrieval benchmark fixture, `BENCHMARKS.md`, draft release notes, and release checklist. PR, release authorization, tag/GitHub Release, crates.io publish, and public visibility flip remain pending. |
 
 > **Release-visibility decision (2026-05-29):** the repo stays **PRIVATE until Vektor is launch-ready (`v0.4.0`)**. `v0.1.0` (and any interim `v0.2.0`/`v0.3.0`) are tagged + released **privately** — reachable only by authenticated collaborators. Going public is a one-way, launch-time action that requires explicit authorization; before flipping, curate what becomes world-visible (notably `VEKTOR_PRD.md`, which holds the competitive playbook). Until launch, the "unauthenticated source install" gate is **intentionally deferred, not blocked**. Do not flip to public — or suggest it — before the `v0.4.0` launch.
 
@@ -137,7 +139,7 @@ Bring the PRD into a state where every implementation conversation downstream pr
 **PRD reference**: Sections 4, 6, 11, 12 (Weeks 1–6 of PRD Phase 1) + B6 from review + brought-forward items (B1, `vektor init`, C8.1, C8.2, lightweight benchmark, README/LICENSE)
 **Depends on**: Stage 1 complete
 **Effort**: Large (timeline lifted; estimate 14–18 weeks part-time for a Rust learner — slightly larger than v2.5 estimate to absorb the brought-forward items)
-**Status**: In progress — `v0.2.0` is published privately; Phase 3 (embedding + storage) is complete and `v0.3.0` is prepared as a private notes-only release (tag/publish pending separate authorization). Phase 4 (search + MCP) is the active phase with per-task files written.
+**Status**: Local-first closeout — `v0.2.0` is published privately; Phase 3 (embedding + storage) is complete and `v0.3.0` is prepared as a private notes-only release (tag/publish pending separate authorization). Phases 4 and 5 are merged to main. Phase 6 launch polish is implemented and verified locally; PR/release authorization remain before any `v0.4.0` tag or public release.
 
 ### Goal
 A working MCP server that can index a real codebase, perform hybrid BM25 + semantic search, and assemble token-budgeted context — **with the security, distribution, and launch prerequisites a stranger needs to actually use the binary on day one.** No more "alpha that only the author can run."

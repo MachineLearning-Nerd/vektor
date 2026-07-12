@@ -12,9 +12,9 @@ rmcp = { version = "1.7", features = ["server", "transport-io"] }
 tokio = { version = "1.52", features = ["full"] }
 
 # File system
-notify = "8.2"
+# notify (watcher) re-added when the file-watcher task lands — WatcherConfig
+# exists but no watcher code does yet; carrying the dep costs ~10 crates/build.
 ignore = "0.4"
-walkdir = "2.5"
 
 # AST Parsing
 tree-sitter = "0.26"
@@ -28,7 +28,10 @@ tree-sitter-go = "0.25"
 ort = "=2.0.0-rc.12"               # Pinned exactly; ort 2.x is RC but actively maintained (wraps ONNX Runtime 1.24). Revisit at GA.
 tokenizers = "0.23"                # HuggingFace tokenizer for ONNX model input construction
 tiktoken-rs = "0.11"               # Precise token counting for two-pass budget verification (v2.3)
-reqwest = { version = "0.13", features = ["json"] }
+# Pinned to the same major as lance-namespace-reqwest-client's transitive
+# reqwest so cargo unifies them — 0.13 here compiled a SECOND full
+# hyper/rustls HTTP stack (~35 extra crates). Bump together with lancedb.
+reqwest = { version = "0.12", features = ["json"] }
 # fastembed = "5"                  # Optional convenience layer — uncomment if you prefer fastembed-rs's bundled models
 
 # Vector Storage (LanceDB embedded)
@@ -64,7 +67,7 @@ tantivy = "0.26"
 rusqlite = { version = "0.39", features = ["bundled"] }
 
 # Utilities
-rayon = "1.12"
+# rayon re-added when parallel chunking lands (PRD); unused so far.
 sha2 = "0.11"
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
@@ -74,7 +77,9 @@ async-trait = "0.1"
 tracing = "0.1"
 tracing-subscriber = { version = "0.3", features = ["env-filter", "json"] }
 clap = { version = "4.6", features = ["derive"] }
-config = "0.15"
+# Only the sources we actually use: TOML file + env vars with snake-case
+# conversion. Defaults pull parsers for json5/ron/ini/yaml (~15 crates).
+config = { version = "0.15", default-features = false, features = ["toml", "convert-case"] }
 toml = "1"
 dirs = "6"
 indicatif = "0.18"
@@ -83,6 +88,13 @@ lru = "0.18"
 sysinfo = "0.38"
 # Phase 3 (task 3.10) — regex for secret pattern matching
 regex = "1"
+
+# Full debuginfo for the huge dep tree (lancedb/datafusion, ort, tantivy) is the
+# main cost in link time and target/ size; line tables keep usable backtraces.
+# For interactive debugger sessions, override once with:
+#   CARGO_PROFILE_DEV_DEBUG=full cargo build
+[profile.dev]
+debug = "line-tables-only"
 
 [dev-dependencies]
 temp-env = "0.3"
@@ -93,3 +105,11 @@ wiremock = "0.6"
 
 # Phase 2 (uncomment when needed)
 # git2 = "0.21"
+
+[[bench]]
+name = "retrieval_quality"
+harness = false
+# Don't build+run this binary as part of `cargo test` (cargo's default for
+# bench targets is test = true, which executes harness = false benches on
+# every test run). Run it explicitly: cargo bench --bench retrieval_quality
+test = false

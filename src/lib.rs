@@ -1,0 +1,21 @@
+pub mod benchmark;
+pub mod cli;
+pub mod error;
+pub mod init;
+pub mod telemetry;
+
+pub(crate) mod chunker;
+pub(crate) mod config;
+pub(crate) mod context;
+pub(crate) mod discovery;
+pub(crate) mod embedder;
+pub(crate) mod index_status;
+pub(crate) mod mcp;
+pub(crate) mod models;
+pub(crate) mod search;
+pub(crate) mod secrets;
+pub(crate) mod shallow_indexer;
+pub(crate) mod state;
+pub(crate) mod text_index;
+pub(crate) mod vector_store;
+pub(crate) mod warmup;
