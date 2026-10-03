@@ -33,7 +33,7 @@ The first three tools (`index_codebase`, `search_code`, `get_context_for_prompt`
 
 ## Status
 
-**Pre-alpha — `v0.4.0` local-first launch polish implemented and verified on the Phase 6 branch; public release pending authorization.**
+**Pre-alpha — `v0.4.0` runs from source: indexing, hybrid search and token-budgeted context through 3 MCP tools. Prebuilt binaries are not published yet.**
 
 The current artifacts are the design documents plus a runnable Rust implementation through the Stage 2 local-first scope:
 
@@ -44,8 +44,6 @@ The current artifacts are the design documents plus a runnable Rust implementati
 | [`LICENSE`](LICENSE) | MIT license. | 21 |
 
 The current codebase implements CLI parsing, config loading, stderr-only tracing, an rmcp stdio server, file discovery, file/chunk hashing, AST/sliding-window chunking, ONNX/OpenAI-compatible embedding backends, LanceDB vector storage, Tantivy BM25, hybrid search, real MCP handlers for the 3 primary tools, token-budgeted context assembly, `vektor init`, and a report-only retrieval benchmark baseline.
-
-The repository and release artifacts remain private/deferred until the explicit `v0.4.0` release and `6.6 go public` authorization gates.
 
 ---
 
