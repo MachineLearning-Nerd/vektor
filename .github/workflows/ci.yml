@@ -13,9 +13,8 @@ name: CI
 # uncomment the push/pull_request triggers below — they already carry a
 # paths-ignore for docs so doc-only commits won't burn runner minutes.
 #
-# Full 5-platform matrix lands in task 6.2 with the release pipeline (adds
-# macOS-x86_64, linux-aarch64, windows-x86_64). cargo-deny (task 0.4) still
-# runs automatically in .github/workflows/audit.yml (Ubuntu-only, cheap).
+# Full 5-platform matrix is manual-only until launch. cargo-deny (task 0.4)
+# still runs automatically in .github/workflows/audit.yml (Ubuntu-only, cheap).
 
 on:
   workflow_dispatch:        # manual trigger only — $0 until you run it
@@ -37,13 +36,23 @@ permissions:
 
 jobs:
   build:
-    name: build
+    name: build-${{ matrix.target }}
     runs-on: ${{ matrix.os }}
     timeout-minutes: 30
     strategy:
       fail-fast: false
       matrix:
-        os: [macos-latest, ubuntu-latest]
+        include:
+          - os: macos-13
+            target: x86_64-apple-darwin
+          - os: macos-14
+            target: aarch64-apple-darwin
+          - os: ubuntu-24.04
+            target: x86_64-unknown-linux-gnu
+          - os: ubuntu-24.04-arm
+            target: aarch64-unknown-linux-gnu
+          - os: windows-latest
+            target: x86_64-pc-windows-msvc
     steps:
       - name: Checkout
         uses: actions/checkout@v4
@@ -55,6 +64,7 @@ jobs:
         uses: dtolnay/rust-toolchain@stable
         with:
           components: rustfmt, clippy
+          targets: ${{ matrix.target }}
 
       # lance-encoding's build.rs invokes protoc to generate Rust types from
       # .proto files. CI runners (ubuntu-latest, macos-latest) don't have
@@ -72,12 +82,12 @@ jobs:
         run: cargo fmt --check
 
       - name: cargo clippy
-        run: cargo clippy --workspace --all-targets -- -D warnings
+        run: cargo clippy --workspace --all-targets --target ${{ matrix.target }} -- -D warnings
 
       - name: cargo test
-        run: cargo test --workspace
+        run: cargo test --workspace --target ${{ matrix.target }}
 
       - name: cargo doc (no-deps)
-        run: cargo doc --workspace --no-deps
+        run: cargo doc --workspace --no-deps --target ${{ matrix.target }}
         env:
           RUSTDOCFLAGS: "-D warnings"

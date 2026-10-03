@@ -1,0 +1,158 @@
+{
+  "corpus": [
+    {
+      "path": "tokio/src/runtime/builder.rs",
+      "content": "pub struct Builder { worker_threads: usize, enable_io: bool, enable_time: bool }\nimpl Builder {\n    pub fn new_multi_thread() -> Builder { Builder { worker_threads: 1, enable_io: false, enable_time: false } }\n    pub fn worker_threads(mut self, val: usize) -> Self { self.worker_threads = val; self }\n    pub fn enable_all(mut self) -> Self { self.enable_io = true; self.enable_time = true; self }\n    pub fn thread_name(mut self, name: &str) -> Self { let _ = name; self }\n    pub fn build(self) -> Runtime { Runtime::new(self) }\n}\npub struct Runtime;\nimpl Runtime { fn new(_: Builder) -> Runtime { Runtime } }\n"
+    },
+    {
+      "path": "tokio/src/runtime/scheduler/multi_thread/worker.rs",
+      "content": "pub struct Worker { local_queue: Vec<Task>, steal: Steal }\nstruct Task;\nstruct Steal;\nimpl Worker {\n    pub fn run(&mut self) { self.park_timeout(); self.poll_local_queue(); }\n    fn poll_local_queue(&mut self) { while let Some(task) = self.local_queue.pop() { self.run_task(task); } }\n    fn run_task(&self, _task: Task) {}\n    fn steal_work(&self) -> Option<Task> { None }\n    fn park_timeout(&self) {}\n}\n"
+    },
+    {
+      "path": "tokio/src/runtime/time/sleep.rs",
+      "content": "pub struct Sleep { deadline: Instant, entry: TimerEntry }\nstruct Instant;\nstruct TimerEntry;\nimpl Sleep {\n    pub fn reset(&mut self, deadline: Instant) { self.deadline = deadline; }\n    pub fn poll_elapsed(&mut self) -> Poll<()> { self.register_timer(); Poll::Pending }\n    fn register_timer(&mut self) {}\n}\nenum Poll<T> { Ready(T), Pending }\n"
+    },
+    {
+      "path": "tokio/src/time/interval.rs",
+      "content": "pub struct Interval { period: Duration, missed_tick_behavior: MissedTickBehavior }\nstruct Duration;\npub enum MissedTickBehavior { Burst, Delay, Skip }\nimpl Interval {\n    pub fn tick(&mut self) -> TickFuture { TickFuture }\n    pub fn set_missed_tick_behavior(&mut self, behavior: MissedTickBehavior) { self.missed_tick_behavior = behavior; }\n    pub fn period(&self) -> Duration { self.period }\n}\npub struct TickFuture;\n"
+    },
+    {
+      "path": "tokio/src/sync/mpsc/bounded.rs",
+      "content": "pub fn channel<T>(buffer: usize) -> (Sender<T>, Receiver<T>) { let _ = buffer; (Sender::new(), Receiver::new()) }\npub struct Sender<T> { permits: usize, _value: std::marker::PhantomData<T> }\npub struct Receiver<T> { _value: std::marker::PhantomData<T> }\nimpl<T> Sender<T> {\n    fn new() -> Self { Sender { permits: 0, _value: std::marker::PhantomData } }\n    pub async fn send(&self, value: T) -> Result<(), SendError<T>> { let _ = value; Ok(()) }\n    pub fn try_send(&self, value: T) -> Result<(), TrySendError<T>> { let _ = value; Ok(()) }\n}\nimpl<T> Receiver<T> { fn new() -> Self { Receiver { _value: std::marker::PhantomData } } pub async fn recv(&mut self) -> Option<T> { None } }\npub struct SendError<T>(T);\npub struct TrySendError<T>(T);\n"
+    },
+    {
+      "path": "tokio/src/sync/oneshot.rs",
+      "content": "pub fn channel<T>() -> (Sender<T>, Receiver<T>) { (Sender::new(), Receiver::new()) }\npub struct Sender<T> { _value: std::marker::PhantomData<T> }\npub struct Receiver<T> { _value: std::marker::PhantomData<T> }\nimpl<T> Sender<T> { fn new() -> Self { Sender { _value: std::marker::PhantomData } } pub fn send(self, value: T) -> Result<(), T> { let _ = value; Ok(()) } }\nimpl<T> Receiver<T> { fn new() -> Self { Receiver { _value: std::marker::PhantomData } } pub async fn await_value(self) -> Result<T, Closed> { Err(Closed) } }\npub struct Closed;\n"
+    },
+    {
+      "path": "tokio/src/sync/watch.rs",
+      "content": "pub fn channel<T>(init: T) -> (Sender<T>, Receiver<T>) { let _ = init; (Sender::new(), Receiver::new()) }\npub struct Sender<T> { version: usize, _value: std::marker::PhantomData<T> }\npub struct Receiver<T> { seen: usize, _value: std::marker::PhantomData<T> }\nimpl<T> Sender<T> { fn new() -> Self { Sender { version: 0, _value: std::marker::PhantomData } } pub fn send_replace(&mut self, value: T) { let _ = value; self.version += 1; } }\nimpl<T> Receiver<T> { fn new() -> Self { Receiver { seen: 0, _value: std::marker::PhantomData } } pub async fn changed(&mut self) -> Result<(), Closed> { self.seen += 1; Ok(()) } }\npub struct Closed;\n"
+    },
+    {
+      "path": "tokio/src/sync/broadcast.rs",
+      "content": "pub fn channel<T>(capacity: usize) -> (Sender<T>, Receiver<T>) { let _ = capacity; (Sender::new(), Receiver::new()) }\npub struct Sender<T> { tail: usize, _value: std::marker::PhantomData<T> }\npub struct Receiver<T> { next: usize, _value: std::marker::PhantomData<T> }\nimpl<T: Clone> Sender<T> { fn new() -> Self { Sender { tail: 0, _value: std::marker::PhantomData } } pub fn send(&self, value: T) -> Result<usize, SendError<T>> { let _ = value; Ok(self.tail) } }\nimpl<T: Clone> Receiver<T> { fn new() -> Self { Receiver { next: 0, _value: std::marker::PhantomData } } pub async fn recv(&mut self) -> Result<T, RecvError> { Err(RecvError::Lagged(0)) } }\npub struct SendError<T>(T);\npub enum RecvError { Lagged(u64), Closed }\n"
+    },
+    {
+      "path": "tokio/src/io/util/copy.rs",
+      "content": "pub async fn copy<R, W>(reader: &mut R, writer: &mut W) -> Result<u64, Error> { let _ = reader; let _ = writer; Ok(0) }\npub async fn copy_bidirectional<A, B>(a: &mut A, b: &mut B) -> Result<(u64, u64), Error> { let _ = a; let _ = b; Ok((0, 0)) }\npub async fn shutdown<W>(writer: &mut W) -> Result<(), Error> { let _ = writer; Ok(()) }\npub struct Error;\n"
+    },
+    {
+      "path": "tokio/src/net/tcp/listener.rs",
+      "content": "pub struct TcpListener { addr: SocketAddr }\npub struct TcpStream;\npub struct SocketAddr;\nimpl TcpListener {\n    pub async fn bind(addr: SocketAddr) -> Result<TcpListener, Error> { Ok(TcpListener { addr }) }\n    pub async fn accept(&self) -> Result<(TcpStream, SocketAddr), Error> { Ok((TcpStream, self.local_addr()?)) }\n    pub fn local_addr(&self) -> Result<SocketAddr, Error> { Ok(SocketAddr) }\n}\npub struct Error;\n"
+    },
+    {
+      "path": "tokio/src/task/join_set.rs",
+      "content": "pub struct JoinSet<T> { tasks: Vec<JoinHandle<T>> }\npub struct JoinHandle<T>(T);\npub struct JoinError;\nimpl<T> JoinSet<T> {\n    pub fn new() -> JoinSet<T> { JoinSet { tasks: Vec::new() } }\n    pub fn spawn<F>(&mut self, task: F) -> AbortHandle { let _ = task; AbortHandle }\n    pub async fn join_next(&mut self) -> Option<Result<T, JoinError>> { None }\n    pub fn abort_all(&mut self) { self.tasks.clear(); }\n}\npub struct AbortHandle;\n"
+    },
+    {
+      "path": "tokio/src/task/spawn.rs",
+      "content": "pub fn spawn<F>(future: F) -> JoinHandle<F::Output> where F: Future + Send + 'static, F::Output: Send + 'static { let _ = future; JoinHandle::new() }\npub fn spawn_blocking<F, R>(function: F) -> JoinHandle<R> where F: FnOnce() -> R + Send + 'static, R: Send + 'static { let _ = function; JoinHandle::new() }\npub struct JoinHandle<T> { _value: std::marker::PhantomData<T> }\nimpl<T> JoinHandle<T> { fn new() -> Self { JoinHandle { _value: std::marker::PhantomData } } pub fn abort(&self) {} }\npub trait Future { type Output; }\n"
+    },
+    {
+      "path": "tokio/src/signal/unix.rs",
+      "content": "pub fn signal(kind: SignalKind) -> Result<Signal, Error> { let _ = kind; Ok(Signal) }\npub struct Signal;\npub struct SignalKind;\nimpl SignalKind { pub fn interrupt() -> SignalKind { SignalKind } pub fn terminate() -> SignalKind { SignalKind } }\nimpl Signal { pub async fn recv(&mut self) -> Option<()> { None } }\npub struct Error;\n"
+    }
+  ],
+  "queries": [
+    {
+      "id": "runtime_builder_enable_all",
+      "query": "runtime builder enable all io time driver",
+      "relevant_paths": ["tokio/src/runtime/builder.rs"]
+    },
+    {
+      "id": "runtime_worker_local_queue",
+      "query": "multi thread worker local queue steal work",
+      "relevant_paths": ["tokio/src/runtime/scheduler/multi_thread/worker.rs"]
+    },
+    {
+      "id": "sleep_reset_deadline",
+      "query": "sleep reset deadline timer entry poll elapsed",
+      "relevant_paths": ["tokio/src/runtime/time/sleep.rs"]
+    },
+    {
+      "id": "interval_missed_tick",
+      "query": "interval missed tick behavior burst delay skip",
+      "relevant_paths": ["tokio/src/time/interval.rs"]
+    },
+    {
+      "id": "mpsc_bounded_send",
+      "query": "bounded mpsc channel sender try send receiver recv",
+      "relevant_paths": ["tokio/src/sync/mpsc/bounded.rs"]
+    },
+    {
+      "id": "oneshot_channel",
+      "query": "oneshot channel sender receiver send closed",
+      "relevant_paths": ["tokio/src/sync/oneshot.rs"]
+    },
+    {
+      "id": "watch_changed",
+      "query": "watch receiver changed send replace version seen",
+      "relevant_paths": ["tokio/src/sync/watch.rs"]
+    },
+    {
+      "id": "broadcast_lagged",
+      "query": "broadcast channel receiver lagged send tail next",
+      "relevant_paths": ["tokio/src/sync/broadcast.rs"]
+    },
+    {
+      "id": "io_copy_bidirectional",
+      "query": "copy bidirectional reader writer shutdown bytes",
+      "relevant_paths": ["tokio/src/io/util/copy.rs"]
+    },
+    {
+      "id": "tcp_listener_accept",
+      "query": "tcp listener bind accept local addr socket stream",
+      "relevant_paths": ["tokio/src/net/tcp/listener.rs"]
+    },
+    {
+      "id": "join_set_spawn",
+      "query": "join set spawn join next abort all tasks",
+      "relevant_paths": ["tokio/src/task/join_set.rs"]
+    },
+    {
+      "id": "spawn_blocking",
+      "query": "spawn blocking function join handle abort future",
+      "relevant_paths": ["tokio/src/task/spawn.rs"]
+    },
+    {
+      "id": "unix_signal_interrupt",
+      "query": "unix signal interrupt terminate recv kind",
+      "relevant_paths": ["tokio/src/signal/unix.rs"]
+    },
+    {
+      "id": "builder_worker_threads",
+      "query": "worker threads thread name build runtime",
+      "relevant_paths": ["tokio/src/runtime/builder.rs"]
+    },
+    {
+      "id": "sleep_register_timer",
+      "query": "register timer sleep poll pending",
+      "relevant_paths": ["tokio/src/runtime/time/sleep.rs"]
+    },
+    {
+      "id": "mpsc_permits_buffer",
+      "query": "mpsc buffer permits bounded sender",
+      "relevant_paths": ["tokio/src/sync/mpsc/bounded.rs"]
+    },
+    {
+      "id": "watch_version",
+      "query": "watch sender version receiver seen changed",
+      "relevant_paths": ["tokio/src/sync/watch.rs"]
+    },
+    {
+      "id": "tcp_local_addr",
+      "query": "tcp listener local addr bind socket",
+      "relevant_paths": ["tokio/src/net/tcp/listener.rs"]
+    },
+    {
+      "id": "join_abort_all",
+      "query": "abort all join set task handles",
+      "relevant_paths": ["tokio/src/task/join_set.rs"]
+    },
+    {
+      "id": "interval_period",
+      "query": "interval period tick future behavior",
+      "relevant_paths": ["tokio/src/time/interval.rs"]
+    }
+  ]
+}

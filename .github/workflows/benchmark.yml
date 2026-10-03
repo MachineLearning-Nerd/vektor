@@ -1,0 +1,105 @@
+name: Benchmark
+
+# Retrieval benchmark reporting is informational for v0.4.0. The job posts a
+# PR-visible delta but deliberately does not fail the PR on benchmark movement.
+
+on:
+  workflow_dispatch:
+  pull_request:
+    branches: [main]
+    paths:
+      - 'src/**'
+      - 'benches/**'
+      - 'scripts/benchmark_delta.py'
+      - 'Cargo.toml'
+      - 'Cargo.lock'
+      - 'BENCHMARKS.md'
+      - '.github/workflows/benchmark.yml'
+
+concurrency:
+  group: benchmark-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+  pull-requests: write
+
+jobs:
+  retrieval-quality:
+    name: retrieval-quality-informational
+    runs-on: ubuntu-24.04
+    timeout-minutes: 45
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Install Rust
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Install protoc
+        uses: arduino/setup-protoc@v3
+        with:
+          repo-token: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Cache Cargo deps
+        uses: Swatinem/rust-cache@v2
+
+      - name: Run retrieval benchmark
+        id: bench
+        shell: bash
+        continue-on-error: true
+        run: |
+          set -o pipefail
+          cargo bench --bench retrieval_quality 2>&1 | tee benchmark-output.txt
+
+      - name: Render benchmark delta
+        shell: bash
+        run: |
+          set -euo pipefail
+          if ! python3 scripts/benchmark_delta.py benchmark-output.txt BENCHMARKS.md benchmark-summary.md; then
+            {
+              echo "<!-- vektor-benchmark-delta -->"
+              echo "## Vektor retrieval benchmark"
+              echo
+              echo "Benchmark output could not be parsed. This is informational for v0.4.0."
+              echo
+              echo '```text'
+              tail -n 80 benchmark-output.txt
+              echo '```'
+            } > benchmark-summary.md
+          fi
+          cat benchmark-summary.md >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Comment benchmark delta
+        if: github.event_name == 'pull_request'
+        uses: actions/github-script@v7
+        continue-on-error: true
+        with:
+          script: |
+            const fs = require('fs');
+            const marker = '<!-- vektor-benchmark-delta -->';
+            const body = fs.readFileSync('benchmark-summary.md', 'utf8');
+            const { owner, repo } = context.repo;
+            const issue_number = context.issue.number;
+            const comments = await github.rest.issues.listComments({
+              owner,
+              repo,
+              issue_number,
+              per_page: 100,
+            });
+            const existing = comments.data.find(comment => comment.body && comment.body.includes(marker));
+            if (existing) {
+              await github.rest.issues.updateComment({
+                owner,
+                repo,
+                comment_id: existing.id,
+                body,
+              });
+            } else {
+              await github.rest.issues.createComment({
+                owner,
+                repo,
+                issue_number,
+                body,
+              });
+            }

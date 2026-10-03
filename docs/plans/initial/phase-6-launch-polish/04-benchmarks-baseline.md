@@ -13,10 +13,10 @@ Commit the initial v0.4.0 benchmark baseline and wire CI to surface benchmark de
 
 ## Acceptance Criteria
 
-- [ ] `BENCHMARKS.md` contains baseline metrics and reproduction commands.
-- [ ] CI captures benchmark output.
-- [ ] PR benchmark deltas are visible to reviewers.
-- [ ] Benchmark metadata includes enough context to reproduce results.
+- [x] `BENCHMARKS.md` contains baseline metrics and reproduction commands.
+- [x] CI captures benchmark output.
+- [x] PR benchmark deltas are visible to reviewers.
+- [x] Benchmark metadata includes enough context to reproduce results.
 
 ## Verification
 

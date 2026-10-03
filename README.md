@@ -5,7 +5,7 @@
 > 100% your machine. 100% open source.
 
 [![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE)
-[![Status](https://img.shields.io/badge/status-v0.2.0%20implemented%20locally-yellow.svg)](VEKTOR_ROADMAP.md)
+[![Status](https://img.shields.io/badge/status-v0.4.0%20local--first%20closeout-yellow.svg)](VEKTOR_ROADMAP.md)
 [![PRD](https://img.shields.io/badge/PRD-v2.5-blue.svg)](VEKTOR_PRD.md)
 
 ---
@@ -33,9 +33,9 @@ The first three tools (`index_codebase`, `search_code`, `get_context_for_prompt`
 
 ## Status
 
-**Pre-alpha — `v0.2.0` discovery/chunking implemented locally; release publish pending.**
+**Pre-alpha — `v0.4.0` local-first launch polish implemented and verified on the Phase 6 branch; public release pending authorization.**
 
-The current artifacts are the design documents plus a runnable Rust implementation through discovery and chunking:
+The current artifacts are the design documents plus a runnable Rust implementation through the Stage 2 local-first scope:
 
 | Document | Purpose | Lines |
 |---|---|---|
@@ -43,9 +43,9 @@ The current artifacts are the design documents plus a runnable Rust implementati
 | [`VEKTOR_ROADMAP.md`](VEKTOR_ROADMAP.md) | Staged implementation plan. When and how we know we're done. | ~500 |
 | [`LICENSE`](LICENSE) | MIT license. | 21 |
 
-The current codebase implements CLI parsing, config loading, stderr-only tracing, an rmcp stdio server with 3 no-op tool handlers, file discovery, file/chunk hashing, AST/sliding-window chunking, and Phase 2 `vektor index` behavior. It does **not** embed, search, write LanceDB vectors, or assemble context yet.
+The current codebase implements CLI parsing, config loading, stderr-only tracing, an rmcp stdio server, file discovery, file/chunk hashing, AST/sliding-window chunking, ONNX/OpenAI-compatible embedding backends, LanceDB vector storage, Tantivy BM25, hybrid search, real MCP handlers for the 3 primary tools, token-budgeted context assembly, `vektor init`, and a report-only retrieval benchmark baseline.
 
-If you want to follow along: ⭐ the repo and watch for the first approved release tags.
+The repository and release artifacts remain private/deferred until the explicit `v0.4.0` release and `6.6 go public` authorization gates.
 
 ---
 
@@ -90,22 +90,23 @@ Source installs build the LanceDB/Arrow stack. `lance-encoding` invokes `protoc`
 
 Also install Rust 1.91+; this repo pins 1.91.0 in `rust-toolchain.toml`.
 
-## Install (after the `v0.1.0` tag is published)
+## Install
 
-At `v0.1.0`, the supported install path is source install from the Git tag. The release has no binary attachments.
+Public install is not active yet. For local development from this checkout:
 
 ```bash
-cargo install --git https://github.com/MachineLearning-Nerd/vektor --tag v0.1.0 --locked
-vektor --help
+cargo build --release
+./target/release/vektor --help
+./target/release/vektor init --dry-run
 ```
 
-Prebuilt binaries, `vektor init`, and model download UX are planned for the `v0.4.0` launch milestone:
+The intended post-authorization `v0.4.0` flow is:
 
 ```bash
-# Prebuilt binary (planned for v0.4.0)
+# Prebuilt binary after the GitHub Release is published
 curl -fsSL https://install.vektor.dev | sh
 
-# Cargo/crates.io install after the final crate name is resolved
+# Cargo/crates.io install after the final crate name is approved
 cargo install <final-crate-name>
 
 # Then register with your agent
@@ -116,7 +117,7 @@ vektor models download    # one-time ~300MB download of Jina v2
 vektor index /path/to/repo
 ```
 
-Only the first block is in `v0.1.0` scope. The second block describes the intended UX for `v0.4.0`.
+The public binary installer, crates.io package, release tag, and repository visibility flip are all deferred until explicit release/public authorization.
 
 ---
 
